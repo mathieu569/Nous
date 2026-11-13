@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
-import 'screens/days_screen.dart';
 import 'screens/events_screen.dart';
-import 'screens/messages_screen.dart';
+import 'screens/home_screen.dart';
 import 'store.dart';
 
 Future<void> main() async {
@@ -49,8 +48,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      DaysScreen(store: widget.store),
-      MessagesScreen(store: widget.store),
+      HomeScreen(store: widget.store),
       EventsScreen(store: widget.store),
     ];
     return Scaffold(
@@ -60,7 +58,6 @@ class _HomeShellState extends State<HomeShell> {
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.favorite_border), label: 'Nous'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: 'Messages'),
           NavigationDestination(icon: Icon(Icons.event), label: 'Événements'),
         ],
       ),

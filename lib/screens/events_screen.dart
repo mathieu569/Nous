@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../store.dart';
-import 'days_screen.dart' show daysBetween;
+import '../utils.dart' show daysBetween;
 
 class EventsScreen extends StatelessWidget {
   const EventsScreen({super.key, required this.store});
