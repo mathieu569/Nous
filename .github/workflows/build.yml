@@ -1,0 +1,71 @@
+name: Build Nous
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Générer les fichiers Android
+        run: flutter create --platforms=android --project-name nous --org fr.nous.couple .
+
+      - run: rm -rf test
+
+      - run: flutter pub get
+
+      - name: Compiler l'APK
+        run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nous-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Générer les fichiers web
+        run: flutter create --platforms=web --project-name nous --org fr.nous.couple .
+
+      - run: rm -rf test
+
+      - run: flutter pub get
+
+      - name: Compiler le site
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
