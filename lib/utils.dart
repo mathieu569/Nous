@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 int daysBetween(DateTime from, DateTime to) {
   final a = DateTime.utc(from.year, from.month, from.day);
@@ -20,6 +21,36 @@ List<int> breakdown(DateTime from, DateTime to) {
     m += 12;
   }
   return [y, m, d];
+}
+
+/// Message d'erreur lisible.
+String errorText(Object e) {
+  String m;
+  if (e is PostgrestException) {
+    m = e.message;
+  } else if (e is AuthException) {
+    m = e.message;
+  } else if (e is StorageException) {
+    m = e.message;
+  } else {
+    m = e.toString();
+  }
+  final l = m.toLowerCase();
+  if (l.contains('invalid login credentials')) {
+    return 'Email ou mot de passe incorrect.';
+  }
+  if (l.contains('already registered')) {
+    return 'Cet email a déjà un compte. Connecte-toi.';
+  }
+  if (l.contains('password should be at least')) {
+    return 'Mot de passe trop court (6 caractères minimum).';
+  }
+  if (l.contains('failed host lookup') ||
+      l.contains('socketexception') ||
+      l.contains('clientexception')) {
+    return 'Pas de connexion Internet.';
+  }
+  return m;
 }
 
 /// Petite boîte de dialogue avec un champ texte. Renvoie null si annulé.

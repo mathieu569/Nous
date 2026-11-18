@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../store.dart';
-import '../utils.dart' show daysBetween;
+import '../utils.dart';
 
 class EventsScreen extends StatelessWidget {
   const EventsScreen({super.key, required this.store});
@@ -13,6 +13,12 @@ class EventsScreen extends StatelessWidget {
     if (n == 0) return 'Aujourd\'hui !';
     if (n > 0) return 'J-$n';
     return 'Il y a ${-n} j';
+  }
+
+  void _snack(BuildContext context, Object e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(errorText(e))));
   }
 
   Future<void> _add(BuildContext context) async {
@@ -57,8 +63,12 @@ class EventsScreen extends StatelessWidget {
               onPressed: () async {
                 final title = c.text.trim();
                 if (title.isEmpty || date == null) return;
-                await store.addEvent(title, date!);
-                if (ctx.mounted) Navigator.pop(ctx);
+                try {
+                  await store.addEvent(title, date!);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } catch (e) {
+                  _snack(ctx, e);
+                }
               },
               child: const Text('Ajouter'),
             ),
@@ -96,7 +106,14 @@ class EventsScreen extends StatelessWidget {
                     padding: const EdgeInsets.only(right: 16),
                     child: const Icon(Icons.delete),
                   ),
-                  onDismissed: (_) => store.removeEvent(e.id),
+                  onDismissed: (_) async {
+                    try {
+                      await store.removeEvent(e.id);
+                    } catch (err) {
+                      _snack(context, err);
+                      await store.refresh();
+                    }
+                  },
                   child: Card(
                     child: ListTile(
                       title: Text(e.title),

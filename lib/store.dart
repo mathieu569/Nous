@@ -1,47 +1,57 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class Person {
-  Person({required this.name, this.status = '', this.photo});
-  String name;
-  String status;
-  Uint8List? photo;
+String _ymd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        'status': status,
-        'photo': photo == null ? null : base64Encode(photo!),
-      };
+class Profile {
+  Profile({
+    required this.userId,
+    required this.name,
+    required this.status,
+    this.photoPath,
+  });
+  final String userId;
+  final String name;
+  final String status;
+  final String? photoPath;
 
-  factory Person.fromJson(Map<String, dynamic> j) => Person(
-        name: j['name'] as String,
-        status: (j['status'] as String?) ?? '',
-        photo: j['photo'] == null ? null : base64Decode(j['photo'] as String),
+  factory Profile.fromRow(Map<String, dynamic> r) => Profile(
+        userId: r['user_id'] as String,
+        name: (r['name'] as String?) ?? '',
+        status: (r['status'] as String?) ?? '',
+        photoPath: r['photo_path'] as String?,
+      );
+
+  Profile copyWith({String? name, String? status, String? photoPath}) =>
+      Profile(
+        userId: userId,
+        name: name ?? this.name,
+        status: status ?? this.status,
+        photoPath: photoPath ?? this.photoPath,
       );
 }
 
 class Story {
-  Story(this.id, this.owner, this.at, this.png);
+  Story({
+    required this.id,
+    required this.authorId,
+    required this.createdAt,
+    required this.imagePath,
+  });
   final String id;
-  final int owner; // 0 ou 1
-  final DateTime at;
-  final Uint8List png;
+  final String authorId;
+  final DateTime createdAt;
+  final String imagePath;
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'owner': owner,
-        'at': at.toIso8601String(),
-        'png': base64Encode(png),
-      };
-
-  factory Story.fromJson(Map<String, dynamic> j) => Story(
-        j['id'] as String,
-        j['owner'] as int,
-        DateTime.parse(j['at'] as String),
-        base64Decode(j['png'] as String),
+  factory Story.fromRow(Map<String, dynamic> r) => Story(
+        id: r['id'] as String,
+        authorId: r['author_id'] as String,
+        createdAt: DateTime.parse(r['created_at'] as String).toLocal(),
+        imagePath: r['image_path'] as String,
       );
 }
 
@@ -51,91 +61,242 @@ class CoupleEvent {
   final String title;
   final DateTime date;
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'title': title, 'date': date.toIso8601String()};
-
-  factory CoupleEvent.fromJson(Map<String, dynamic> j) => CoupleEvent(
-        j['id'] as String,
-        j['title'] as String,
-        DateTime.parse(j['date'] as String),
+  factory CoupleEvent.fromRow(Map<String, dynamic> r) => CoupleEvent(
+        r['id'] as String,
+        r['title'] as String,
+        DateTime.parse(r['event_date'] as String),
       );
 }
 
-/// Stockage local (v0). Le backend partagé arrive à l'étape suivante.
+/// Données du couple, stockées dans Supabase et partagées entre les deux téléphones.
 class AppStore extends ChangeNotifier {
-  AppStore._(this._prefs);
-  final SharedPreferences _prefs;
+  AppStore();
 
+  SupabaseClient get _db => Supabase.instance.client;
+  String get userId => _db.auth.currentUser!.id;
+
+  bool loaded = false; // premier chargement terminé (réussi ou non)
+  String? error;
+  String? coupleId;
+  String? code;
   DateTime? startDate;
-  List<Person> persons = [Person(name: 'Moi'), Person(name: 'Elle')];
-  List<Story> stories = []; // les plus récentes d'abord
+  Profile? me;
+  Profile? partner;
+  List<Story> stories = [];
   List<CoupleEvent> events = [];
 
-  static Future<AppStore> load() async {
-    final s = AppStore._(await SharedPreferences.getInstance());
-    final start = s._prefs.getString('start');
-    if (start != null) s.startDate = DateTime.parse(start);
-    for (var i = 0; i < 2; i++) {
-      final raw = s._prefs.getString('person$i');
-      if (raw != null) {
-        s.persons[i] = Person.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+  final Map<String, Uint8List> _images = {};
+  final Set<String> _loadingImages = {};
+  RealtimeChannel? _channel;
+  Timer? _debounce;
+
+  bool get hasCouple => coupleId != null;
+
+  Uint8List? image(String? path) => path == null ? null : _images[path];
+
+  // ---------- chargement ----------
+
+  Future<void> refresh() async {
+    try {
+      final profRows = await _db.from('profiles').select();
+      final profiles =
+          profRows.map<Profile>((r) => Profile.fromRow(r)).toList();
+      me = profiles.where((p) => p.userId == userId).firstOrNull;
+      partner = profiles.where((p) => p.userId != userId).firstOrNull;
+
+      if (me == null) {
+        coupleId = null;
+        error = null;
+        loaded = true;
+        notifyListeners();
+        return;
       }
+
+      final coupleRows = await _db.from('couples').select();
+      if (coupleRows.isNotEmpty) {
+        final c = coupleRows.first;
+        coupleId = c['id'] as String;
+        code = c['code'] as String;
+        final sd = c['start_date'] as String?;
+        startDate = sd == null ? null : DateTime.parse(sd);
+      }
+
+      final storyRows = await _db
+          .from('stories')
+          .select()
+          .order('created_at', ascending: false)
+          .limit(60);
+      stories = storyRows.map<Story>((r) => Story.fromRow(r)).toList();
+
+      final eventRows = await _db.from('events').select().order('event_date');
+      events = eventRows.map<CoupleEvent>((r) => CoupleEvent.fromRow(r)).toList();
+
+      error = null;
+      loaded = true;
+      notifyListeners();
+      _subscribe();
+      unawaited(_fetchImages());
+    } catch (e) {
+      error = e.toString();
+      loaded = true;
+      notifyListeners();
     }
-    s.stories = (s._prefs.getStringList('stories') ?? [])
-        .map((e) => Story.fromJson(jsonDecode(e) as Map<String, dynamic>))
-        .toList();
-    s.events = (s._prefs.getStringList('events') ?? [])
-        .map((e) => CoupleEvent.fromJson(jsonDecode(e) as Map<String, dynamic>))
-        .toList();
-    return s;
   }
+
+  Future<void> _fetchImages() async {
+    final paths = <String>{
+      if (me?.photoPath != null) me!.photoPath!,
+      if (partner?.photoPath != null) partner!.photoPath!,
+      for (final s in stories) s.imagePath,
+    }..removeWhere((p) => _images.containsKey(p) || _loadingImages.contains(p));
+
+    await Future.wait(paths.map((p) async {
+      _loadingImages.add(p);
+      try {
+        _images[p] = await _db.storage.from('nous').download(p);
+        notifyListeners();
+      } catch (_) {
+        // image introuvable ou réseau coupé: on réessaiera au prochain refresh
+      } finally {
+        _loadingImages.remove(p);
+      }
+    }));
+  }
+
+  void _subscribe() {
+    if (_channel != null || coupleId == null) return;
+    final ch = _db.channel('nous-$coupleId');
+    for (final t in ['profiles', 'stories', 'events', 'couples']) {
+      ch.onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: t,
+        callback: (_) => _scheduleRefresh(),
+      );
+    }
+    ch.subscribe();
+    _channel = ch;
+  }
+
+  void _scheduleRefresh() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), refresh);
+  }
+
+  // ---------- compte et couple ----------
+
+  Future<void> createCouple(String name) async {
+    await _db.rpc('create_couple', params: {'p_name': name});
+    await refresh();
+  }
+
+  Future<void> joinCouple(String code, String name) async {
+    await _db.rpc('join_couple', params: {'p_code': code, 'p_name': name});
+    await refresh();
+  }
+
+  Future<void> signOut() => _db.auth.signOut();
+
+  // ---------- actions ----------
 
   Future<void> setStartDate(DateTime d) async {
+    await _db.from('couples').update({'start_date': _ymd(d)}).eq('id', coupleId!);
     startDate = d;
-    await _prefs.setString('start', d.toIso8601String());
     notifyListeners();
   }
 
-  Future<void> updatePerson(int i,
-      {String? name, String? status, Uint8List? photo}) async {
-    final p = persons[i];
-    if (name != null && name.isNotEmpty) p.name = name;
-    if (status != null) p.status = status;
-    if (photo != null) p.photo = photo;
-    await _prefs.setString('person$i', jsonEncode(p.toJson()));
+  Future<void> updateMe({String? name, String? status}) async {
+    final upd = <String, dynamic>{
+      if (name != null && name.isNotEmpty) 'name': name,
+      if (status != null) 'status': status,
+    };
+    if (upd.isEmpty) return;
+    await _db.from('profiles').update(upd).eq('user_id', userId);
+    me = me!.copyWith(
+      name: upd['name'] as String?,
+      status: upd['status'] as String?,
+    );
     notifyListeners();
   }
 
-  Future<void> addStory(int owner, Uint8List png) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
-    stories = [Story(id, owner, DateTime.now(), png), ...stories];
-    await _saveStories();
+  Future<void> setMyPhoto(Uint8List bytes) async {
+    final path =
+        '$coupleId/avatar-$userId-${DateTime.now().millisecondsSinceEpoch}.jpg';
+    await _db.storage.from('nous').uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(contentType: 'image/jpeg'),
+        );
+    final old = me?.photoPath;
+    await _db.from('profiles').update({'photo_path': path}).eq('user_id', userId);
+    _images[path] = bytes;
+    me = me!.copyWith(photoPath: path);
+    notifyListeners();
+    if (old != null) {
+      try {
+        await _db.storage.from('nous').remove([old]);
+      } catch (_) {}
+      _images.remove(old);
+    }
+  }
+
+  Future<void> addStory(Uint8List png) async {
+    final path =
+        '$coupleId/story-${DateTime.now().millisecondsSinceEpoch}-$userId.png';
+    await _db.storage.from('nous').uploadBinary(
+          path,
+          png,
+          fileOptions: const FileOptions(contentType: 'image/png'),
+        );
+    final row = await _db
+        .from('stories')
+        .insert({
+          'couple_id': coupleId,
+          'author_id': userId,
+          'image_path': path,
+        })
+        .select()
+        .single();
+    _images[path] = png;
+    stories = [Story.fromRow(row), ...stories];
     notifyListeners();
   }
 
-  Future<void> removeStory(String id) async {
-    stories = stories.where((s) => s.id != id).toList();
-    await _saveStories();
+  Future<void> removeStory(Story s) async {
+    await _db.from('stories').delete().eq('id', s.id);
+    stories = stories.where((e) => e.id != s.id).toList();
     notifyListeners();
+    try {
+      await _db.storage.from('nous').remove([s.imagePath]);
+    } catch (_) {}
+    _images.remove(s.imagePath);
   }
-
-  Future<void> _saveStories() => _prefs.setStringList(
-      'stories', stories.map((e) => jsonEncode(e.toJson())).toList());
 
   Future<void> addEvent(String title, DateTime date) async {
-    final e = CoupleEvent(
-        DateTime.now().microsecondsSinceEpoch.toString(), title, date);
-    events = [...events, e];
-    await _saveEvents();
+    final row = await _db
+        .from('events')
+        .insert({
+          'couple_id': coupleId,
+          'title': title,
+          'event_date': _ymd(date),
+        })
+        .select()
+        .single();
+    events = [...events, CoupleEvent.fromRow(row)];
     notifyListeners();
   }
 
   Future<void> removeEvent(String id) async {
+    await _db.from('events').delete().eq('id', id);
     events = events.where((e) => e.id != id).toList();
-    await _saveEvents();
     notifyListeners();
   }
 
-  Future<void> _saveEvents() => _prefs.setStringList(
-      'events', events.map((e) => jsonEncode(e.toJson())).toList());
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    final ch = _channel;
+    if (ch != null) unawaited(_db.removeChannel(ch));
+    super.dispose();
+  }
 }
