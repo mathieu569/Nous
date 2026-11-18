@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'utils.dart';
+
 String _ymd(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -56,16 +58,36 @@ class Story {
 }
 
 class CoupleEvent {
-  CoupleEvent(this.id, this.title, this.date);
+  CoupleEvent({
+    required this.id,
+    required this.title,
+    required this.at,
+    this.note,
+    this.photoPath,
+    this.repeat = EventRepeat.none,
+  });
   final String id;
   final String title;
-  final DateTime date;
+  final DateTime at; // date d'origine + heure, en heure locale
+  final String? note;
+  final String? photoPath;
+  final EventRepeat repeat;
 
-  factory CoupleEvent.fromRow(Map<String, dynamic> r) => CoupleEvent(
-        r['id'] as String,
-        r['title'] as String,
-        DateTime.parse(r['event_date'] as String),
-      );
+  factory CoupleEvent.fromRow(Map<String, dynamic> r) {
+    final raw = (r['event_at'] ?? r['event_date']) as String;
+    final repeatName = (r['repeat'] as String?) ?? 'none';
+    return CoupleEvent(
+      id: r['id'] as String,
+      title: r['title'] as String,
+      at: DateTime.parse(raw).toLocal(),
+      note: r['note'] as String?,
+      photoPath: r['photo_path'] as String?,
+      repeat: EventRepeat.values.firstWhere(
+        (v) => v.name == repeatName,
+        orElse: () => EventRepeat.none,
+      ),
+    );
+  }
 }
 
 /// Données du couple, stockées dans Supabase et partagées entre les deux téléphones.
@@ -128,8 +150,11 @@ class AppStore extends ChangeNotifier {
           .limit(60);
       stories = storyRows.map<Story>((r) => Story.fromRow(r)).toList();
 
-      final eventRows = await _db.from('events').select().order('event_date');
-      events = eventRows.map<CoupleEvent>((r) => CoupleEvent.fromRow(r)).toList();
+      try {
+        events = await _fetchEvents();
+      } catch (_) {
+        events = []; // SQL des événements pas encore lancé : on n'empêche pas l'appli de démarrer
+      }
 
       error = null;
       loaded = true;
@@ -148,6 +173,8 @@ class AppStore extends ChangeNotifier {
       if (me?.photoPath != null) me!.photoPath!,
       if (partner?.photoPath != null) partner!.photoPath!,
       for (final s in stories) s.imagePath,
+      for (final e in events)
+        if (e.photoPath != null) e.photoPath!,
     }..removeWhere((p) => _images.containsKey(p) || _loadingImages.contains(p));
 
     await Future.wait(paths.map((p) async {
@@ -281,24 +308,72 @@ class AppStore extends ChangeNotifier {
     _images.remove(s.imagePath);
   }
 
-  Future<void> addEvent(String title, DateTime date) async {
-    final row = await _db
-        .from('events')
-        .insert({
-          'couple_id': coupleId,
-          'title': title,
-          'event_date': _ymd(date),
-        })
-        .select()
-        .single();
-    events = [...events, CoupleEvent.fromRow(row)];
-    notifyListeners();
+  Future<List<CoupleEvent>> _fetchEvents() async {
+    final rows = await _db.from('events').select().order('event_at');
+    return rows.map<CoupleEvent>((r) => CoupleEvent.fromRow(r)).toList();
   }
 
-  Future<void> removeEvent(String id) async {
-    await _db.from('events').delete().eq('id', id);
-    events = events.where((e) => e.id != id).toList();
+  /// Crée (id == null) ou modifie un événement.
+  Future<void> saveEvent({
+    String? id,
+    required String title,
+    required DateTime at,
+    required EventRepeat repeat,
+    String? note,
+    Uint8List? newPhoto,
+    bool clearPhoto = false,
+  }) async {
+    final old = id == null ? null : events.where((e) => e.id == id).firstOrNull;
+    var photoPath = old?.photoPath;
+    String? toDelete;
+    if (newPhoto != null) {
+      final path =
+          '$coupleId/event-${DateTime.now().millisecondsSinceEpoch}-$userId.jpg';
+      await _db.storage.from('nous').uploadBinary(
+            path,
+            newPhoto,
+            fileOptions: const FileOptions(contentType: 'image/jpeg'),
+          );
+      _images[path] = newPhoto;
+      toDelete = photoPath;
+      photoPath = path;
+    } else if (clearPhoto && photoPath != null) {
+      toDelete = photoPath;
+      photoPath = null;
+    }
+    final data = <String, dynamic>{
+      'title': title,
+      'event_at': at.toUtc().toIso8601String(),
+      'repeat': repeat.name,
+      'note': (note == null || note.isEmpty) ? null : note,
+      'photo_path': photoPath,
+    };
+    if (id == null) {
+      await _db.from('events').insert({...data, 'couple_id': coupleId});
+    } else {
+      await _db.from('events').update(data).eq('id', id);
+    }
+    events = await _fetchEvents();
     notifyListeners();
+    if (toDelete != null) {
+      try {
+        await _db.storage.from('nous').remove([toDelete]);
+      } catch (_) {}
+      _images.remove(toDelete);
+    }
+  }
+
+  Future<void> removeEvent(CoupleEvent e) async {
+    await _db.from('events').delete().eq('id', e.id);
+    events = events.where((x) => x.id != e.id).toList();
+    notifyListeners();
+    final p = e.photoPath;
+    if (p != null) {
+      try {
+        await _db.storage.from('nous').remove([p]);
+      } catch (_) {}
+      _images.remove(p);
+    }
   }
 
   @override

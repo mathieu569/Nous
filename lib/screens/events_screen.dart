@@ -3,77 +3,91 @@ import 'package:intl/intl.dart';
 
 import '../store.dart';
 import '../utils.dart';
+import 'event_edit_screen.dart';
 
 class EventsScreen extends StatelessWidget {
   const EventsScreen({super.key, required this.store});
   final AppStore store;
 
-  String _countdown(DateTime date) {
-    final n = daysBetween(DateTime.now(), date);
-    if (n == 0) return 'Aujourd\'hui !';
-    if (n > 0) return 'J-$n';
-    return 'Il y a ${-n} j';
+  void _open(BuildContext context, CoupleEvent? e) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EventEditScreen(store: store, event: e),
+      ),
+    );
   }
 
-  void _snack(BuildContext context, Object e) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(errorText(e))));
+  String _countdown(DateTime next, DateTime now) {
+    final n = daysBetween(now, next);
+    if (n <= 0) return 'Aujourd\'hui';
+    if (n == 1) return 'Demain';
+    return 'J-$n';
   }
 
-  Future<void> _add(BuildContext context) async {
-    final c = TextEditingController();
-    DateTime? date;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          title: const Text('Nouvel événement'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: c,
-                autofocus: true,
-                decoration: const InputDecoration(hintText: 'Ex: Vacances'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: () async {
-                  final now = DateTime.now();
-                  final p = await showDatePicker(
-                    context: ctx,
-                    initialDate: date ?? now,
-                    firstDate: DateTime(now.year - 1),
-                    lastDate: DateTime(now.year + 10),
-                  );
-                  if (p != null) setState(() => date = p);
-                },
-                child: Text(date == null
-                    ? 'Choisir la date'
-                    : DateFormat.yMMMMd('fr_FR').format(date!)),
-              ),
-            ],
+  String _ago(DateTime at, DateTime now) {
+    final n = daysBetween(at, now);
+    if (n <= 0) return 'Aujourd\'hui';
+    if (n == 1) return 'Hier';
+    return 'Il y a $n j';
+  }
+
+  Widget _header(BuildContext context, String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+      child: Text(text,
+          style: Theme.of(context)
+              .textTheme
+              .titleMedium
+              ?.copyWith(fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _card(BuildContext context, CoupleEvent e, DateTime now, bool isPast) {
+    final shown = isPast ? e.at : nextOccurrence(e.at, e.repeat, now);
+    final photo = store.image(e.photoPath);
+    final hasNote = e.note != null && e.note!.isNotEmpty;
+    final rep = repeatLabel(e.repeat);
+    Widget? leading;
+    if (photo != null) {
+      leading = ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.memory(photo,
+            width: 52, height: 52, fit: BoxFit.cover, gaplessPlayback: true),
+      );
+    } else if (e.photoPath != null) {
+      leading = const SizedBox(
+        width: 52,
+        height: 52,
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Annuler')),
-            FilledButton(
-              onPressed: () async {
-                final title = c.text.trim();
-                if (title.isEmpty || date == null) return;
-                try {
-                  await store.addEvent(title, date!);
-                  if (ctx.mounted) Navigator.pop(ctx);
-                } catch (e) {
-                  _snack(ctx, e);
-                }
-              },
-              child: const Text('Ajouter'),
-            ),
+        ),
+      );
+    }
+    return Card(
+      child: ListTile(
+        leading: leading,
+        isThreeLine: hasNote,
+        title: Text(e.title),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${DateFormat.yMMMMd('fr_FR').format(shown)} à '
+                '${DateFormat.Hm('fr_FR').format(shown)}'
+                '${rep.isEmpty ? '' : ' · $rep'}'),
+            if (hasNote)
+              Text(e.note!, maxLines: 2, overflow: TextOverflow.ellipsis),
           ],
         ),
+        trailing: Text(
+          isPast ? _ago(e.at, now) : _countdown(shown, now),
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        onTap: () => _open(context, e),
       ),
     );
   }
@@ -82,48 +96,36 @@ class EventsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _add(context),
+        onPressed: () => _open(context, null),
         child: const Icon(Icons.add),
       ),
       body: ListenableBuilder(
         listenable: store,
         builder: (context, _) {
-          final list = [...store.events]
-            ..sort((a, b) => a.date.compareTo(b.date));
-          if (list.isEmpty) {
+          final now = DateTime.now();
+          final upcoming = <CoupleEvent>[];
+          final past = <CoupleEvent>[];
+          for (final e in store.events) {
+            if (e.repeat == EventRepeat.none && e.at.isBefore(now)) {
+              past.add(e);
+            } else {
+              upcoming.add(e);
+            }
+          }
+          upcoming.sort((a, b) => nextOccurrence(a.at, a.repeat, now)
+              .compareTo(nextOccurrence(b.at, b.repeat, now)));
+          past.sort((a, b) => b.at.compareTo(a.at));
+
+          if (upcoming.isEmpty && past.isEmpty) {
             return const Center(child: Text('Aucun événement. Ajoutez-en un.'));
           }
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 88),
             children: [
-              for (final e in list)
-                Dismissible(
-                  key: ValueKey(e.id),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    color: Colors.red.shade200,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 16),
-                    child: const Icon(Icons.delete),
-                  ),
-                  onDismissed: (_) async {
-                    try {
-                      await store.removeEvent(e.id);
-                    } catch (err) {
-                      _snack(context, err);
-                      await store.refresh();
-                    }
-                  },
-                  child: Card(
-                    child: ListTile(
-                      title: Text(e.title),
-                      subtitle:
-                          Text(DateFormat.yMMMMd('fr_FR').format(e.date)),
-                      trailing: Text(_countdown(e.date),
-                          style: Theme.of(context).textTheme.titleMedium),
-                    ),
-                  ),
-                ),
+              if (upcoming.isNotEmpty) _header(context, 'À venir'),
+              for (final e in upcoming) _card(context, e, now, false),
+              if (past.isNotEmpty) _header(context, 'Passés'),
+              for (final e in past) _card(context, e, now, true),
             ],
           );
         },

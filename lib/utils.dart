@@ -23,6 +23,67 @@ List<int> breakdown(DateTime from, DateTime to) {
   return [y, m, d];
 }
 
+/// Récurrence d'un événement.
+enum EventRepeat { none, weekly, monthly, yearly }
+
+String repeatLabel(EventRepeat r) {
+  switch (r) {
+    case EventRepeat.weekly:
+      return 'chaque semaine';
+    case EventRepeat.monthly:
+      return 'chaque mois';
+    case EventRepeat.yearly:
+      return 'chaque année';
+    case EventRepeat.none:
+      return '';
+  }
+}
+
+/// Ajoute des mois en gardant l'heure. Un 31 tombe le dernier jour des mois courts, un 29 février le 28.
+DateTime addMonths(DateTime d, int months) {
+  final total = d.year * 12 + (d.month - 1) + months;
+  final y = total ~/ 12;
+  final m = total % 12 + 1;
+  final lastDay = DateTime(y, m + 1, 0).day;
+  final day = d.day > lastDay ? lastDay : d.day;
+  return DateTime(y, m, day, d.hour, d.minute);
+}
+
+DateTime _nthOccurrence(DateTime start, EventRepeat r, int k) {
+  switch (r) {
+    case EventRepeat.weekly:
+      return DateTime(
+          start.year, start.month, start.day + 7 * k, start.hour, start.minute);
+    case EventRepeat.monthly:
+      return addMonths(start, k);
+    case EventRepeat.yearly:
+      return addMonths(start, 12 * k);
+    case EventRepeat.none:
+      return start;
+  }
+}
+
+/// Prochaine occurrence à partir de [now]. Sans récurrence : la date d'origine.
+DateTime nextOccurrence(DateTime start, EventRepeat r, DateTime now) {
+  if (r == EventRepeat.none || !start.isBefore(now)) return start;
+  var k = 0;
+  if (r == EventRepeat.weekly) {
+    k = now.difference(start).inDays ~/ 7;
+  } else if (r == EventRepeat.monthly) {
+    k = (now.year - start.year) * 12 + now.month - start.month;
+  } else if (r == EventRepeat.yearly) {
+    k = now.year - start.year;
+  }
+  if (k < 0) k = 0;
+  while (_nthOccurrence(start, r, k).isBefore(now)) {
+    k++;
+  }
+  while (k > 0 && !_nthOccurrence(start, r, k - 1).isBefore(now)) {
+    k--;
+  }
+  return _nthOccurrence(start, r, k);
+}
+
 /// Message d'erreur lisible.
 String errorText(Object e) {
   String m;
