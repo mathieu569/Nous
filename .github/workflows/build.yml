@@ -21,12 +21,21 @@ jobs:
           channel: stable
           cache: true
 
+      # On ne versionne que lib/ et pubspec.yaml: les dossiers de plateforme sont générés ici.
       - name: Générer les fichiers Android
         run: flutter create --platforms=android --project-name nous --org fr.nous.couple .
 
-      - name: Autoriser Internet
+      # Flutter n'autorise ni Internet ni les notifications en version release par défaut.
+      - name: Autoriser Internet et notifications
         run: |
-          sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+          grep -n "uses-permission" android/app/src/main/AndroidManifest.xml
+
+      # Firebase demande une version d'Android minimale plus récente que celle par défaut.
+      - name: Version minimale d'Android
+        run: |
+          sed -i -E 's/minSdk(Version)?( *=)? *flutter\.minSdkVersion/minSdk = 24/' android/app/build.gradle*
+          grep -n "minSdk" android/app/build.gradle*
 
       - run: rm -rf test
 
@@ -41,6 +50,7 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
 
   web:
+    # Aperçu web testable sur iPhone. Nécessite GitHub Pages (dépôt public sur un compte gratuit).
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,6 +69,9 @@ jobs:
 
       - name: Générer les fichiers web
         run: flutter create --platforms=web --project-name nous --org fr.nous.couple .
+
+      - name: Fichier des notifications web
+        run: cp web_extra/firebase-messaging-sw.js web/firebase-messaging-sw.js
 
       - run: rm -rf test
 
