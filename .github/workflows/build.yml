@@ -24,6 +24,10 @@ jobs:
       - name: Générer les fichiers Android
         run: flutter create --platforms=android --project-name nous --org fr.nous.couple .
 
+      - name: Autoriser Internet
+        run: |
+          sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+
       - run: rm -rf test
 
       - run: flutter pub get
