@@ -70,8 +70,12 @@ jobs:
       - name: Générer les fichiers web
         run: flutter create --platforms=web --project-name nous --org fr.nous.couple .
 
-      - name: Fichier des notifications web
-        run: cp web_extra/firebase-messaging-sw.js web/firebase-messaging-sw.js
+      - name: Fichiers des notifications web
+        run: |
+          cp web_extra/firebase-messaging-sw.js web/firebase-messaging-sw.js
+          cp web_extra/sw-redirect.js web/sw-redirect.js
+          sed -i 's#</head>#  <script src="sw-redirect.js"></script>\n</head>#' web/index.html
+          grep -n "sw-redirect" web/index.html
 
       - run: rm -rf test
 
