@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../store.dart';
 import '../utils.dart';
 import 'draw_screen.dart';
+import 'status_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.store});
@@ -63,7 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _editStatus() async {
-    final t = await askText(context, 'Ton état du moment', store.me?.status ?? '');
+    final t = await askStatus(context, store.me?.status ?? '');
     if (t != null) await _run(() => store.updateMe(status: t));
   }
 
