@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../push.dart';
 import '../store.dart';
 import '../utils.dart';
 import 'draw_screen.dart';
@@ -24,6 +25,44 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
 
   AppStore get store => widget.store;
+
+  bool? _pushOn; // null = on vérifie encore
+
+  @override
+  void initState() {
+    super.initState();
+    _initPush();
+  }
+
+  Future<void> _initPush() async {
+    final on = await PushService.isEnabled();
+    if (on) {
+      try {
+        await PushService.register();
+      } catch (_) {}
+    }
+    if (mounted) setState(() => _pushOn = on);
+  }
+
+  Future<void> _enablePush() async {
+    final err = await PushService.enable();
+    if (!mounted) return;
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    }
+    setState(() => _pushOn = err == null);
+  }
+
+  Widget _pushCard(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.notifications_active_outlined),
+        title: const Text('Activer les notifications'),
+        subtitle: const Text('Pour être prévenu quand l\'autre change son état.'),
+        onTap: _enablePush,
+      ),
+    );
+  }
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() => _busy = true);
@@ -310,6 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               if (_busy) const LinearProgressIndicator(),
               _daysCard(context),
+              if (_pushOn == false) _pushCard(context),
               if (!hasPartner) _codeCard(context),
               const SizedBox(height: 24),
               _bubbles(context),

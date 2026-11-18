@@ -5,11 +5,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
 import 'gates.dart';
+import 'push.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('fr_FR');
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseKey);
+  await PushService.init();
   runApp(const NousApp());
 }
 

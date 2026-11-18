@@ -217,6 +217,15 @@ class AppStore extends ChangeNotifier {
       status: upd['status'] as String?,
     );
     notifyListeners();
+    final s = upd['status'] as String?;
+    if (s != null && s.isNotEmpty) unawaited(_notifyPartner());
+  }
+
+  /// Demande à Supabase d'envoyer une notification à l'autre. Sans effet si ça échoue.
+  Future<void> _notifyPartner() async {
+    try {
+      await _db.functions.invoke('notify-status');
+    } catch (_) {}
   }
 
   Future<void> setMyPhoto(Uint8List bytes) async {
