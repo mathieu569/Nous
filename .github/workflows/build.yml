@@ -59,13 +59,19 @@ jobs:
       - name: Nommer l'APK
         run: cp build/app/outputs/flutter-apk/app-release.apk nous.apk
 
+      # Texte de la Release : "build N" puis le contenu de NOTES.txt (les nouveautés affichées dans l'appli).
+      - name: Notes de version
+        run: |
+          { echo "build ${{ github.run_number }}"; echo; cat NOTES.txt 2>/dev/null || true; } > release_notes.md
+          cat release_notes.md
+
       # Adresse fixe : https://github.com/<compte>/<dépôt>/releases/download/apk-latest/nous.apk
       - name: Publier la Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-latest
           name: Nous (APK)
-          body: build ${{ github.run_number }}
+          body_path: release_notes.md
           files: nous.apk
           make_latest: true
 
