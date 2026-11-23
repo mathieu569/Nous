@@ -27,6 +27,13 @@ jobs:
       - name: Générer les fichiers Android
         run: flutter create --platforms=android --project-name nous --org fr.nous.couple .
 
+      # Nom "Nous" et icône (cœur). Les images sont dans icons_extra/.
+      - name: Nom et icône
+        run: |
+          sed -i 's/android:label="[^"]*"/android:label="Nous"/' android/app/src/main/AndroidManifest.xml
+          cp -r icons_extra/android/res/. android/app/src/main/res/
+          grep -n "android:label" android/app/src/main/AndroidManifest.xml
+
       # Flutter n'autorise ni Internet ni les notifications en version release par défaut.
       - name: Autoriser Internet et notifications
         run: |
@@ -95,6 +102,14 @@ jobs:
 
       - name: Générer les fichiers web
         run: flutter create --platforms=web --project-name nous --org fr.nous.couple .
+
+      - name: Nom et icône
+        run: |
+          cp icons_extra/web/Icon-*.png web/icons/
+          cp icons_extra/web/favicon.png web/favicon.png
+          sed -i 's/"name": "nous"/"name": "Nous"/; s/"short_name": "nous"/"short_name": "Nous"/; s/"background_color": "[^"]*"/"background_color": "#FFF8F7"/; s/"theme_color": "[^"]*"/"theme_color": "#FFF8F7"/' web/manifest.json
+          sed -i 's#<title>nous</title>#<title>Nous</title>#; s#content="nous"#content="Nous"#' web/index.html
+          grep -n "Nous" web/manifest.json web/index.html
 
       - name: Fichiers des notifications web
         run: |
