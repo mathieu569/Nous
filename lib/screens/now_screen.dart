@@ -88,6 +88,7 @@ class _NowScreenState extends State<NowScreen> {
   Widget _slot(MediaKind kind) {
     final m = s.current(kind, _owner);
     return Card(
+      key: ValueKey('slot-${kind.name}-${_owner ?? 'ensemble'}-${m?.id}'),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

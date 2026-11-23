@@ -122,6 +122,7 @@ class FinishedScreen extends StatelessWidget {
           children: [
             for (final m in items)
               Card(
+                key: ValueKey('done-${m.id}'),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
                   onTap: () => _open(context, m),

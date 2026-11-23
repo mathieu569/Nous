@@ -154,6 +154,7 @@ class _MediaSearchScreenState extends State<MediaSearchScreen> {
                   children: [
                     for (final h in _hits)
                       ListTile(
+                        key: ValueKey('hit-${h.kind.name}-${h.title}-${h.coverUrl}'),
                         leading: Cover(url: h.coverUrl, kind: h.kind, height: 56),
                         title: Text(h.title),
                         subtitle: (h.subtitle == null || h.subtitle!.isEmpty)

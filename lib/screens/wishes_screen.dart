@@ -170,6 +170,7 @@ class _WishesScreenState extends State<WishesScreen> {
                         children: [
                           for (final m in items)
                             ListTile(
+                              key: ValueKey('wish-${m.id}'),
                               leading:
                                   Cover(url: m.coverUrl, kind: m.kind, height: 56),
                               title: Text(m.title),
