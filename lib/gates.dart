@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -6,27 +8,59 @@ import 'screens/auth_screen.dart';
 import 'screens/events_screen.dart';
 import 'screens/finished_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/new_password_screen.dart';
 import 'screens/now_screen.dart';
 import 'screens/pair_screen.dart';
 import 'screens/wishes_screen.dart';
+import 'recovery.dart';
 import 'store.dart';
 import 'update.dart';
 
 /// Pas connecté -> écran de connexion. Connecté -> on charge le couple.
-class AuthGate extends StatelessWidget {
+/// Arrivé par le lien "mot de passe oublié" -> on demande un nouveau mot de passe.
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
   @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool _recovery = startedInRecovery;
+  StreamSubscription<AuthState>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = Supabase.instance.client.auth.onAuthStateChange.listen((s) {
+      if (!mounted) return;
+      setState(() {
+        if (s.event == AuthChangeEvent.passwordRecovery) _recovery = true;
+        if (s.event == AuthChangeEvent.signedOut) _recovery = false;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final auth = Supabase.instance.client.auth;
-    return StreamBuilder<AuthState>(
-      stream: auth.onAuthStateChange,
-      builder: (context, _) {
-        final session = auth.currentSession;
-        if (session == null) return const AuthScreen();
-        return CoupleGate(key: ValueKey(session.user.id));
-      },
-    );
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) return const AuthScreen();
+    if (_recovery) {
+      return NewPasswordScreen(
+        recovery: true,
+        onDone: () => setState(() {
+          _recovery = false;
+          startedInRecovery = false;
+        }),
+      );
+    }
+    return CoupleGate(key: ValueKey(session.user.id));
   }
 }
 

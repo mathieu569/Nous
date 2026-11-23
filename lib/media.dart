@@ -85,6 +85,19 @@ class MediaHit {
   final String? coverUrl;
 }
 
+/// Titre simplifié (minuscules, sans accents ni ponctuation) pour repérer les doublons.
+String normTitle(String s) {
+  const from = 'àâäáãçéèêëíìîïñóòôöõúùûüýÿ';
+  const to = 'aaaaaceeeeiiiinooooouuuuyy';
+  final b = StringBuffer();
+  for (final c in s.toLowerCase().split('')) {
+    final i = from.indexOf(c);
+    final d = i >= 0 ? to[i] : c;
+    if (RegExp(r'[a-z0-9]').hasMatch(d)) b.write(d);
+  }
+  return b.toString();
+}
+
 String mediaError(Object e) => e is String ? e : errorText(e);
 
 class Cover extends StatelessWidget {

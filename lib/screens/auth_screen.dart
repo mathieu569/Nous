@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../config.dart';
 import '../utils.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -16,6 +17,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _signup = false;
   bool _busy = false;
   String? _message;
+  bool _info = false; // le message est une information, pas une erreur
 
   @override
   void dispose() {
@@ -34,6 +36,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() {
       _busy = true;
       _message = null;
+      _info = false;
     });
     try {
       final auth = Supabase.instance.client.auth;
@@ -48,6 +51,41 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } catch (e) {
       setState(() => _message = errorText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _forgot() async {
+    final email = _email.text.trim();
+    if (email.isEmpty) {
+      setState(() {
+        _info = false;
+        _message = 'Écris ton email ci-dessus, puis touche « Mot de passe oublié ».';
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await Supabase.instance.client.auth
+          .resetPasswordForEmail(email, redirectTo: webUrl);
+      if (mounted) {
+        setState(() {
+          _info = true;
+          _message = 'Email envoyé. Ouvre le lien, choisis un nouveau mot de passe, '
+              'puis reviens te connecter ici.';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _info = false;
+          _message = errorText(e);
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -99,8 +137,16 @@ class _AuthScreenState extends State<AuthScreen> {
                     const SizedBox(height: 12),
                     Text(_message!,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: theme.colorScheme.error)),
+                        style: TextStyle(
+                            color: _info
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.error)),
                   ],
+                  if (!_signup)
+                    TextButton(
+                      onPressed: _busy ? null : _forgot,
+                      child: const Text('Mot de passe oublié ?'),
+                    ),
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: _busy

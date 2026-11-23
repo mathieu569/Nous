@@ -29,7 +29,9 @@ class FinishedScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => ListenableBuilder(
         listenable: store,
-        builder: (ctx, _) => SafeArea(
+        builder: (ctx, _) {
+          final cur = store.media.firstWhere((x) => x.id == m.id, orElse: () => m);
+          return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -54,7 +56,32 @@ class FinishedScreen extends StatelessWidget {
                     }
                   },
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  icon: const Icon(Icons.event),
+                  label: Text(cur.finishedAt == null
+                      ? 'Date de fin'
+                      : 'Fini le ${DateFormat.yMMMd('fr_FR').format(cur.finishedAt!)} (modifier)'),
+                  onPressed: () async {
+                    final now = DateTime.now();
+                    final d = await showDatePicker(
+                      context: ctx,
+                      initialDate: cur.finishedAt ?? now,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(now.year, now.month, now.day, 23, 59),
+                      helpText: 'Date de fin',
+                    );
+                    if (d == null) return;
+                    try {
+                      await store.setFinishedDate(cur, d);
+                    } catch (e) {
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx)
+                            .showSnackBar(SnackBar(content: Text(mediaError(e))));
+                      }
+                    }
+                  },
+                ),
                 TextButton.icon(
                   icon: const Icon(Icons.undo),
                   label: const Text('Remettre en cours'),
@@ -73,7 +100,8 @@ class FinishedScreen extends StatelessWidget {
               ],
             ),
           ),
-        ),
+        );
+        },
       ),
     );
   }

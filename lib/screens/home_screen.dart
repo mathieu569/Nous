@@ -11,6 +11,7 @@ import '../store.dart';
 import '../utils.dart';
 import 'compose_screen.dart';
 import 'draw_screen.dart';
+import 'new_password_screen.dart';
 import 'status_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -426,6 +427,21 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 12),
               _grid(context, mine),
               const SizedBox(height: 24),
+              Center(
+                child: TextButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (ctx) => NewPasswordScreen(
+                        recovery: false,
+                        onDone: () => Navigator.pop(ctx),
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.lock_outline, size: 18),
+                  label: const Text('Changer mon mot de passe'),
+                ),
+              ),
               Center(
                 child: TextButton.icon(
                   onPressed: store.signOut,

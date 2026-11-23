@@ -439,8 +439,13 @@ class AppStore extends ChangeNotifier {
 
   /// Ajoute un titre à mes envies. Lève un String si le titre est déjà en cours ou fini.
   Future<void> addWish(MediaHit h) async {
+    // Même source, ou même livre venu d'une autre source (titre identique).
     MediaItem? find() => media
-        .where((m) => m.kind == h.kind && m.extId == h.extId)
+        .where((m) =>
+            m.kind == h.kind &&
+            (m.extId == h.extId ||
+                (h.kind == MediaKind.livre &&
+                    normTitle(m.title) == normTitle(h.title))))
         .firstOrNull;
     var item = find();
     if (item == null) {
@@ -533,6 +538,15 @@ class AppStore extends ChangeNotifier {
     } on PostgrestException {
       throw '${m.kind.label} déjà en cours.';
     }
+    await _reloadMedia();
+  }
+
+  /// Change la date de fin (midi, heure locale, pour éviter tout décalage de jour).
+  Future<void> setFinishedDate(MediaItem m, DateTime day) async {
+    final d = DateTime(day.year, day.month, day.day, 12);
+    await _db
+        .from('media')
+        .update({'finished_at': d.toUtc().toIso8601String()}).eq('id', m.id);
     await _reloadMedia();
   }
 
