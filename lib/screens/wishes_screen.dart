@@ -91,10 +91,13 @@ class _WishesScreenState extends State<WishesScreen> {
     final partnerName = (s.partner?.name.isNotEmpty ?? false) ? s.partner!.name : 'Elle';
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => MediaSearchScreen(store: s)),
-        ),
+        onPressed: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => MediaSearchScreen(store: s)),
+          );
+          s.reloadMedia(); // au retour de la recherche, on relit la liste
+        },
         icon: const Icon(Icons.search),
         label: const Text('Chercher'),
       ),

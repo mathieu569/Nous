@@ -416,11 +416,18 @@ class AppStore extends ChangeNotifier {
   int? partnerRating(String mediaId) =>
       partner == null ? null : ratings[mediaId]?[partner!.userId];
 
-  Future<void> _fetchMedia() async {
+  int _mediaSeq = 0;
+
+  /// Charge les titres, envies et notes. Si plusieurs chargements se croisent
+  /// (ajouts rapides), seul le plus récent est gardé. Renvoie ce qui vient d'être lu.
+  Future<List<MediaItem>> _fetchMedia() async {
+    final seq = ++_mediaSeq;
     final m = await _db.from('media').select().order('created_at', ascending: false);
     final w = await _db.from('media_wishes').select();
     final r = await _db.from('media_ratings').select();
-    media = m.map<MediaItem>((x) => MediaItem.fromRow(x)).toList();
+    final items = m.map<MediaItem>((x) => MediaItem.fromRow(x)).toList();
+    if (seq != _mediaSeq) return items; // un chargement plus récent est en cours
+    media = items;
     wishes = {};
     for (final x in w) {
       (wishes[x['media_id'] as String] ??= {}).add(x['user_id'] as String);
@@ -430,6 +437,15 @@ class AppStore extends ChangeNotifier {
       (ratings[x['media_id'] as String] ??= {})[x['user_id'] as String] =
           x['rating'] as int;
     }
+    return items;
+  }
+
+  /// Recharge les titres (à l'ouverture d'un onglet). Sans effet en cas d'erreur.
+  Future<void> reloadMedia() async {
+    try {
+      await _fetchMedia();
+      notifyListeners();
+    } catch (_) {}
   }
 
   Future<void> _reloadMedia() async {
@@ -461,8 +477,9 @@ class AppStore extends ChangeNotifier {
       } catch (_) {
         // l'autre vient peut-être de l'ajouter en même temps : on recharge
       }
-      await _fetchMedia();
-      item = find();
+      final fresh = await _fetchMedia();
+      item = fresh.where((m) => m.kind == h.kind && m.extId == h.extId).firstOrNull ??
+          find();
       if (item == null) throw 'Ajout impossible. Réessaie.';
     }
     if (item.status == 'current') throw 'Déjà en cours.';

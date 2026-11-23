@@ -195,7 +195,10 @@ class _HomeShellState extends State<HomeShell> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onDestinationSelected: (i) {
+          setState(() => _index = i);
+          if (i >= 2) widget.store.reloadMedia(); // Du moment, Envies, Finis
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.favorite_border), label: 'Nous'),
           NavigationDestination(icon: Icon(Icons.event), label: 'Événements'),
