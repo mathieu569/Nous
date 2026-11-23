@@ -36,8 +36,12 @@ class _NowScreenState extends State<NowScreen> {
   }
 
   Future<void> _pick(MediaKind kind) async {
-    final choices =
-        s.media.where((m) => m.kind == kind && m.status == 'wish').toList();
+    final choices = s.media
+        .where((m) =>
+            m.kind == kind &&
+            m.status != 'current' &&
+            (s.openWishOf(m, s.userId) || s.openWishOf(m, s.partner?.userId)))
+        .toList();
     final owner = _owner;
     await showModalBottomSheet<void>(
       context: context,

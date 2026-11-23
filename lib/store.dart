@@ -409,6 +409,35 @@ class AppStore extends ChangeNotifier {
           m.kind == k && m.status == 'current' && m.ownerId == ownerId)
       .firstOrNull;
 
+  /// Ce titre est-il déjà "consommé" par cette personne ? (en cours ou fini pour elle, ou ensemble)
+  bool consumedBy(MediaItem m, String? uid) =>
+      m.status != 'wish' &&
+      (m.ownerId == null || m.ownerId == uid || m.finishedBy == uid);
+
+  /// Envie encore ouverte pour cette personne : souhaitée et pas encore consommée par elle.
+  bool openWishOf(MediaItem m, String? uid) =>
+      uid != null &&
+      (wishes[m.id]?.contains(uid) ?? false) &&
+      !consumedBy(m, uid);
+
+  String _who(String? uid) => uid == null
+      ? 'vous deux'
+      : (uid == me?.userId
+          ? 'toi'
+          : ((partner?.name.isNotEmpty ?? false) ? partner!.name : 'elle'));
+
+  /// Texte d'état d'un titre déjà commencé ou fini ('' pour une simple envie).
+  String statusLabel(MediaItem m) {
+    if (m.status == 'current') {
+      return m.ownerId == null ? 'En cours, ensemble' : 'En cours chez ${_who(m.ownerId)}';
+    }
+    if (m.status == 'done') {
+      final w = m.ownerId == null ? 'vous deux' : _who(m.finishedBy ?? m.ownerId);
+      return 'Déjà fini par $w';
+    }
+    return '';
+  }
+
   bool iWish(String mediaId) => wishes[mediaId]?.contains(userId) ?? false;
   bool partnerWishes(String mediaId) =>
       partner != null && (wishes[mediaId]?.contains(partner!.userId) ?? false);
@@ -482,8 +511,6 @@ class AppStore extends ChangeNotifier {
           find();
       if (item == null) throw 'Ajout impossible. Réessaie.';
     }
-    if (item.status == 'current') throw 'Déjà en cours.';
-    if (item.status == 'done') throw 'Déjà fini.';
     await _db
         .from('media_wishes')
         .upsert({'media_id': item.id, 'user_id': userId}, ignoreDuplicates: true);
@@ -510,7 +537,12 @@ class AppStore extends ChangeNotifier {
     try {
       await _db
           .from('media')
-          .update({'status': 'current', 'owner_id': ownerId}).eq('id', m.id);
+          .update({
+        'status': 'current',
+        'owner_id': ownerId,
+        'finished_by': null,
+        'finished_at': null,
+      }).eq('id', m.id);
     } on PostgrestException {
       throw '${m.kind.label} déjà en cours.';
     }

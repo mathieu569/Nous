@@ -64,19 +64,36 @@ class _MediaSearchScreenState extends State<MediaSearchScreen> {
   Widget _trailing(MediaHit h) {
     final s = widget.store;
     final existing = s.media
-        .where((m) => m.kind == h.kind && m.extId == h.extId)
+        .where((m) =>
+            m.kind == h.kind &&
+            (m.extId == h.extId ||
+                (h.kind == MediaKind.livre &&
+                    normTitle(m.title) == normTitle(h.title))))
         .firstOrNull;
+    var note = '';
     if (existing != null) {
-      if (existing.status == 'current') return const Text('En cours');
-      if (existing.status == 'done') return const Text('Fini');
-      if (s.iWish(existing.id)) {
+      final mine = s.iWish(existing.id);
+      if (existing.status == 'wish' && mine) {
         return const Icon(Icons.check_circle, color: Colors.green);
       }
+      if (s.consumedBy(existing, s.userId)) {
+        return Text(existing.status == 'current' ? 'En cours' : 'Fini');
+      }
+      if (mine) return const Icon(Icons.check_circle, color: Colors.green);
+      if (existing.status != 'wish') {
+        note = existing.status == 'current' ? 'En cours' : 'Fini';
+      }
     }
-    return IconButton(
-      tooltip: 'Ajouter aux envies',
-      icon: const Icon(Icons.add_circle_outline),
-      onPressed: () => _add(h),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (note.isNotEmpty) Text(note),
+        IconButton(
+          tooltip: 'Ajouter aux envies',
+          icon: const Icon(Icons.add_circle_outline),
+          onPressed: () => _add(h),
+        ),
+      ],
     );
   }
 

@@ -35,7 +35,14 @@ class _WishesScreenState extends State<WishesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(title: Text(m.title), subtitle: Text(m.kind.label)),
-            ListTile(
+            if (m.status == 'current')
+              const ListTile(
+                leading: Icon(Icons.hourglass_top),
+                title: Text('Déjà en cours'),
+                enabled: false,
+              )
+            else
+              ListTile(
               leading: const Icon(Icons.play_circle_outline),
               title: const Text('Commencer'),
               onTap: () async {
@@ -105,12 +112,12 @@ class _WishesScreenState extends State<WishesScreen> {
         listenable: s,
         builder: (context, _) {
           final items = s.media.where((m) {
-            if (m.status != 'wish') return false;
             if (_kind != null && m.kind != _kind) return false;
+            final pid = s.partner?.userId;
             return switch (_view) {
-              _View.me => s.iWish(m.id),
-              _View.partner => s.partnerWishes(m.id),
-              _View.all => true,
+              _View.me => s.openWishOf(m, s.userId),
+              _View.partner => s.openWishOf(m, pid),
+              _View.all => s.openWishOf(m, s.userId) || s.openWishOf(m, pid),
             };
           }).toList();
           return Column(
@@ -170,8 +177,10 @@ class _WishesScreenState extends State<WishesScreen> {
                                 m.kind.label,
                                 if (m.subtitle != null && m.subtitle!.isNotEmpty)
                                   m.subtitle!,
+                                if (m.status != 'wish') s.statusLabel(m),
                               ].join(' · ')),
-                              trailing: (s.iWish(m.id) && s.partnerWishes(m.id))
+                              trailing: (s.openWishOf(m, s.userId) &&
+                                      s.openWishOf(m, s.partner?.userId))
                                   ? const Tooltip(
                                       message: 'Vous en avez envie tous les deux',
                                       child: Icon(Icons.favorite, color: Colors.pink),
