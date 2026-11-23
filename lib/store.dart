@@ -388,8 +388,11 @@ class AppStore extends ChangeNotifier {
 
   // ---------- suivi films / séries / livres ----------
 
-  MediaItem? current(MediaKind k) =>
-      media.where((m) => m.kind == k && m.status == 'current').firstOrNull;
+  /// Titre en cours pour une personne (son id) ou pour les deux (ownerId == null).
+  MediaItem? current(MediaKind k, String? ownerId) => media
+      .where((m) =>
+          m.kind == k && m.status == 'current' && m.ownerId == ownerId)
+      .firstOrNull;
 
   bool iWish(String mediaId) => wishes[mediaId]?.contains(userId) ?? false;
   bool partnerWishes(String mediaId) =>
@@ -463,12 +466,14 @@ class AppStore extends ChangeNotifier {
     await _reloadMedia();
   }
 
-  Future<void> start(MediaItem m) async {
-    if (current(m.kind) != null) {
-      throw '${m.kind.label} déjà en cours. Termine-le ou remets-le en envie.';
+  Future<void> start(MediaItem m, String? ownerId) async {
+    if (current(m.kind, ownerId) != null) {
+      throw '${m.kind.label} déjà en cours ici. Termine-le ou remets-le en envie.';
     }
     try {
-      await _db.from('media').update({'status': 'current'}).eq('id', m.id);
+      await _db
+          .from('media')
+          .update({'status': 'current', 'owner_id': ownerId}).eq('id', m.id);
     } on PostgrestException {
       throw '${m.kind.label} déjà en cours.';
     }
@@ -478,6 +483,7 @@ class AppStore extends ChangeNotifier {
   Future<void> backToWish(MediaItem m) async {
     await _db.from('media').update({
       'status': 'wish',
+      'owner_id': null,
       'finished_by': null,
       'finished_at': null,
     }).eq('id', m.id);
@@ -500,7 +506,7 @@ class AppStore extends ChangeNotifier {
 
   /// Remet un titre fini en cours (si le créneau est libre). Les notes sont gardées.
   Future<void> reopen(MediaItem m) async {
-    if (current(m.kind) != null) {
+    if (current(m.kind, m.ownerId) != null) {
       throw '${m.kind.label} déjà en cours.';
     }
     try {

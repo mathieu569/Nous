@@ -41,8 +41,8 @@ class _WishesScreenState extends State<WishesScreen> {
               onTap: () async {
                 Navigator.pop(ctx);
                 try {
-                  await s.start(m);
-                  _snack('Ajouté à « Du moment ».');
+                  await s.start(m, s.userId);
+                  _snack('Ajouté à « Du moment » (moi).');
                 } catch (e) {
                   _snack(e);
                 }

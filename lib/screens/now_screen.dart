@@ -3,26 +3,48 @@ import 'package:flutter/material.dart';
 import '../media.dart';
 import '../store.dart';
 
-/// Ce qu'on regarde ou lit en ce moment : un film, une série, un livre au maximum.
-class NowScreen extends StatelessWidget {
+enum _Who { me, partner, together }
+
+/// Ce qu'on regarde ou lit en ce moment : un film, une série, un livre au maximum,
+/// pour moi, pour elle et pour nous deux.
+class NowScreen extends StatefulWidget {
   const NowScreen({super.key, required this.store});
   final AppStore store;
 
-  void _snack(BuildContext context, Object e) {
+  @override
+  State<NowScreen> createState() => _NowScreenState();
+}
+
+class _NowScreenState extends State<NowScreen> {
+  _Who _who = _Who.me;
+
+  AppStore get s => widget.store;
+
+  /// Id du propriétaire des créneaux affichés (null = ensemble).
+  String? get _owner => switch (_who) {
+        _Who.me => s.userId,
+        _Who.partner => s.partner?.userId,
+        _Who.together => null,
+      };
+
+  bool get _editable => _who != _Who.partner;
+
+  void _snack(Object e) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(mediaError(e))));
   }
 
-  Future<void> _pick(BuildContext context, MediaKind kind) async {
-    final choices = store.media
-        .where((m) => m.kind == kind && m.status == 'wish')
-        .toList();
+  Future<void> _pick(MediaKind kind) async {
+    final choices =
+        s.media.where((m) => m.kind == kind && m.status == 'wish').toList();
+    final owner = _owner;
     await showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
         child: choices.isEmpty
-            ? Padding(
-                padding: const EdgeInsets.all(24),
+            ? const Padding(
+                padding: EdgeInsets.all(24),
                 child: Text(
                     'Aucune envie de ce type. Ajoutes-en une dans l\'onglet Envies.'),
               )
@@ -37,9 +59,9 @@ class NowScreen extends StatelessWidget {
                       onTap: () async {
                         Navigator.pop(ctx);
                         try {
-                          await store.start(m);
+                          await s.start(m, owner);
                         } catch (e) {
-                          if (context.mounted) _snack(context, e);
+                          _snack(e);
                         }
                       },
                     ),
@@ -49,18 +71,18 @@ class NowScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _finish(BuildContext context, MediaItem m) async {
+  Future<void> _finish(MediaItem m) async {
     final rating = await askRating(context, m.title);
     if (rating == null) return;
     try {
-      await store.finish(m, rating);
+      await s.finish(m, rating);
     } catch (e) {
-      if (context.mounted) _snack(context, e);
+      _snack(e);
     }
   }
 
-  Widget _slot(BuildContext context, MediaKind kind) {
-    final m = store.current(kind);
+  Widget _slot(MediaKind kind) {
+    final m = s.current(kind, _owner);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -75,11 +97,13 @@ class NowScreen extends StatelessWidget {
             const SizedBox(height: 12),
             if (m == null) ...[
               const Text('Rien en cours.'),
-              const SizedBox(height: 8),
-              FilledButton.tonal(
-                onPressed: () => _pick(context, kind),
-                child: const Text('Choisir dans nos envies'),
-              ),
+              if (_editable) ...[
+                const SizedBox(height: 8),
+                FilledButton.tonal(
+                  onPressed: () => _pick(kind),
+                  child: const Text('Choisir dans nos envies'),
+                ),
+              ],
             ] else ...[
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -98,27 +122,29 @@ class NowScreen extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () async {
-                      try {
-                        await store.backToWish(m);
-                      } catch (e) {
-                        if (context.mounted) _snack(context, e);
-                      }
-                    },
-                    child: const Text('Remettre en envie'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: () => _finish(context, m),
-                    child: const Text('Terminé'),
-                  ),
-                ],
-              ),
+              if (_editable) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          await s.backToWish(m);
+                        } catch (e) {
+                          _snack(e);
+                        }
+                      },
+                      child: const Text('Remettre en envie'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: () => _finish(m),
+                      child: const Text('Terminé'),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ],
         ),
@@ -129,13 +155,36 @@ class NowScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) => ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          for (final k in MediaKind.values) _slot(context, k),
-        ],
-      ),
+      listenable: s,
+      builder: (context, _) {
+        final partnerName =
+            (s.partner?.name.isNotEmpty ?? false) ? s.partner!.name : 'Elle';
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            SegmentedButton<_Who>(
+              showSelectedIcon: false,
+              segments: [
+                const ButtonSegment<_Who>(value: _Who.me, label: Text('Moi')),
+                ButtonSegment<_Who>(
+                    value: _Who.partner, label: Text(partnerName)),
+                const ButtonSegment<_Who>(
+                    value: _Who.together, label: Text('Ensemble')),
+              ],
+              selected: {_who},
+              onSelectionChanged: (v) => setState(() => _who = v.first),
+            ),
+            const SizedBox(height: 8),
+            if (_who == _Who.partner && s.partner == null)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('Elle n\'a pas encore rejoint le couple.'),
+              )
+            else
+              for (final k in MediaKind.values) _slot(k),
+          ],
+        );
+      },
     );
   }
 }

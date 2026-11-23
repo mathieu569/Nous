@@ -37,6 +37,7 @@ class MediaItem {
     required this.status,
     this.finishedBy,
     this.finishedAt,
+    this.ownerId,
     required this.createdAt,
   });
   final String id;
@@ -48,6 +49,7 @@ class MediaItem {
   final String status; // wish | current | done
   final String? finishedBy;
   final DateTime? finishedAt;
+  final String? ownerId; // pour qui c'est en cours ; null = ensemble
   final DateTime createdAt;
 
   factory MediaItem.fromRow(Map<String, dynamic> r) => MediaItem(
@@ -62,6 +64,7 @@ class MediaItem {
         finishedAt: r['finished_at'] == null
             ? null
             : DateTime.parse(r['finished_at'] as String).toLocal(),
+        ownerId: r['owner_id'] as String?,
         createdAt: DateTime.parse(r['created_at'] as String).toLocal(),
       );
 }
