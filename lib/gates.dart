@@ -145,15 +145,37 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
-  bool _update = false;
+  UpdateInfo? _update;
 
   @override
   void initState() {
     super.initState();
-    updateAvailable().then((v) {
-      if (mounted && v) setState(() => _update = true);
+    checkUpdate().then((v) {
+      if (mounted && v != null) setState(() => _update = v);
     });
   }
+
+  Future<void> _download() =>
+      launchUrl(Uri.parse(apkUrl), mode: LaunchMode.externalApplication);
+
+  Future<void> _showNotes() => showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Ce qui change'),
+          content: SingleChildScrollView(child: Text(_update!.notes)),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _download();
+              },
+              child: const Text('Mettre à jour'),
+            ),
+          ],
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -168,7 +190,7 @@ class _HomeShellState extends State<HomeShell> {
       body: SafeArea(
         child: Column(
           children: [
-            if (_update)
+            if (_update != null)
               Material(
                 color: Theme.of(context).colorScheme.primaryContainer,
                 child: Padding(
@@ -176,14 +198,18 @@ class _HomeShellState extends State<HomeShell> {
                   child: Row(
                     children: [
                       const Expanded(child: Text('Nouvelle version disponible.')),
+                      if (_update!.notes.isNotEmpty)
+                        TextButton(
+                          onPressed: _showNotes,
+                          child: const Text('Nouveautés'),
+                        ),
                       TextButton(
-                        onPressed: () => launchUrl(Uri.parse(apkUrl),
-                            mode: LaunchMode.externalApplication),
+                        onPressed: _download,
                         child: const Text('Mettre à jour'),
                       ),
                       IconButton(
                         icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => _update = false),
+                        onPressed: () => setState(() => _update = null),
                       ),
                     ],
                   ),
