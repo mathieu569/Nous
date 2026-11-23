@@ -8,6 +8,8 @@ on:
 jobs:
   android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # pour publier la Release
     steps:
       - uses: actions/checkout@v4
 
@@ -41,13 +43,31 @@ jobs:
 
       - run: flutter pub get
 
-      - name: Compiler l'APK
-        run: flutter build apk --release
+      # Clé de signature fixe (secret GitHub). Sans elle, Android refuse les mises à jour.
+      # Gradle signe la version release avec ~/.android/debug.keystore : on y dépose notre clé.
+      - name: Clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          test -s ~/.android/debug.keystore || { echo "Secret ANDROID_KEYSTORE_B64 manquant"; exit 1; }
 
-      - uses: actions/upload-artifact@v4
+      - name: Compiler l'APK
+        run: flutter build apk --release --build-number=${{ github.run_number }} --dart-define=APP_BUILD=${{ github.run_number }}
+
+      - name: Nommer l'APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk nous.apk
+
+      # Adresse fixe : https://github.com/<compte>/<dépôt>/releases/download/apk-latest/nous.apk
+      - name: Publier la Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: nous-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          tag_name: apk-latest
+          name: Nous (APK)
+          body: build ${{ github.run_number }}
+          files: nous.apk
+          make_latest: true
 
   web:
     # Aperçu web testable sur iPhone. Nécessite GitHub Pages (dépôt public sur un compte gratuit).
