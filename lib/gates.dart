@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'screens/auth_screen.dart';
 import 'screens/events_screen.dart';
@@ -9,6 +10,7 @@ import 'screens/now_screen.dart';
 import 'screens/pair_screen.dart';
 import 'screens/wishes_screen.dart';
 import 'store.dart';
+import 'update.dart';
 
 /// Pas connecté -> écran de connexion. Connecté -> on charge le couple.
 class AuthGate extends StatelessWidget {
@@ -109,6 +111,15 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  bool _update = false;
+
+  @override
+  void initState() {
+    super.initState();
+    updateAvailable().then((v) {
+      if (mounted && v) setState(() => _update = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -120,7 +131,34 @@ class _HomeShellState extends State<HomeShell> {
       FinishedScreen(store: widget.store),
     ];
     return Scaffold(
-      body: SafeArea(child: pages[_index]),
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (_update)
+              Material(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Row(
+                    children: [
+                      const Expanded(child: Text('Nouvelle version disponible.')),
+                      TextButton(
+                        onPressed: () => launchUrl(Uri.parse(apkUrl),
+                            mode: LaunchMode.externalApplication),
+                        child: const Text('Mettre à jour'),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() => _update = false),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            Expanded(child: pages[_index]),
+          ],
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
