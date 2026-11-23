@@ -3,8 +3,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'screens/auth_screen.dart';
 import 'screens/events_screen.dart';
+import 'screens/finished_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/now_screen.dart';
 import 'screens/pair_screen.dart';
+import 'screens/wishes_screen.dart';
 import 'store.dart';
 
 /// Pas connecté -> écran de connexion. Connecté -> on charge le couple.
@@ -112,6 +115,9 @@ class _HomeShellState extends State<HomeShell> {
     final pages = [
       HomeScreen(store: widget.store),
       EventsScreen(store: widget.store),
+      NowScreen(store: widget.store),
+      WishesScreen(store: widget.store),
+      FinishedScreen(store: widget.store),
     ];
     return Scaffold(
       body: SafeArea(child: pages[_index]),
@@ -121,6 +127,9 @@ class _HomeShellState extends State<HomeShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.favorite_border), label: 'Nous'),
           NavigationDestination(icon: Icon(Icons.event), label: 'Événements'),
+          NavigationDestination(icon: Icon(Icons.play_circle_outline), label: 'Du moment'),
+          NavigationDestination(icon: Icon(Icons.bookmark_border), label: 'Envies'),
+          NavigationDestination(icon: Icon(Icons.check_circle_outline), label: 'Finis'),
         ],
       ),
     );

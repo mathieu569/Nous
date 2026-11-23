@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'media.dart';
 import 'utils.dart';
 
 String _ymd(DateTime d) =>
@@ -106,6 +107,9 @@ class AppStore extends ChangeNotifier {
   Profile? partner;
   List<Story> stories = [];
   List<CoupleEvent> events = [];
+  List<MediaItem> media = [];
+  Map<String, Set<String>> wishes = {}; // media id -> ids des personnes qui en ont envie
+  Map<String, Map<String, int>> ratings = {}; // media id -> (user id -> note)
 
   final Map<String, Uint8List> _images = {};
   final Set<String> _loadingImages = {};
@@ -156,6 +160,12 @@ class AppStore extends ChangeNotifier {
         events = []; // SQL des événements pas encore lancé : on n'empêche pas l'appli de démarrer
       }
 
+      try {
+        await _fetchMedia();
+      } catch (_) {
+        media = []; // SQL du suivi pas encore lancé
+      }
+
       error = null;
       loaded = true;
       notifyListeners();
@@ -193,7 +203,7 @@ class AppStore extends ChangeNotifier {
   void _subscribe() {
     if (_channel != null || coupleId == null) return;
     final ch = _db.channel('nous-$coupleId');
-    for (final t in ['profiles', 'stories', 'events', 'couples']) {
+    for (final t in ['profiles', 'stories', 'events', 'couples', 'media', 'media_wishes', 'media_ratings']) {
       ch.onPostgresChanges(
         event: PostgresChangeEvent.all,
         schema: 'public',
@@ -375,6 +385,145 @@ class AppStore extends ChangeNotifier {
       _images.remove(p);
     }
   }
+
+  // ---------- suivi films / séries / livres ----------
+
+  MediaItem? current(MediaKind k) =>
+      media.where((m) => m.kind == k && m.status == 'current').firstOrNull;
+
+  bool iWish(String mediaId) => wishes[mediaId]?.contains(userId) ?? false;
+  bool partnerWishes(String mediaId) =>
+      partner != null && (wishes[mediaId]?.contains(partner!.userId) ?? false);
+  int? myRating(String mediaId) => ratings[mediaId]?[userId];
+  int? partnerRating(String mediaId) =>
+      partner == null ? null : ratings[mediaId]?[partner!.userId];
+
+  Future<void> _fetchMedia() async {
+    final m = await _db.from('media').select().order('created_at', ascending: false);
+    final w = await _db.from('media_wishes').select();
+    final r = await _db.from('media_ratings').select();
+    media = m.map<MediaItem>((x) => MediaItem.fromRow(x)).toList();
+    wishes = {};
+    for (final x in w) {
+      (wishes[x['media_id'] as String] ??= {}).add(x['user_id'] as String);
+    }
+    ratings = {};
+    for (final x in r) {
+      (ratings[x['media_id'] as String] ??= {})[x['user_id'] as String] =
+          x['rating'] as int;
+    }
+  }
+
+  Future<void> _reloadMedia() async {
+    await _fetchMedia();
+    notifyListeners();
+  }
+
+  /// Ajoute un titre à mes envies. Lève un String si le titre est déjà en cours ou fini.
+  Future<void> addWish(MediaHit h) async {
+    MediaItem? find() => media
+        .where((m) => m.kind == h.kind && m.extId == h.extId)
+        .firstOrNull;
+    var item = find();
+    if (item == null) {
+      try {
+        await _db.from('media').insert({
+          'couple_id': coupleId,
+          'kind': h.kind.name,
+          'ext_id': h.extId,
+          'title': h.title,
+          'subtitle': h.subtitle,
+          'cover_url': h.coverUrl,
+        });
+      } catch (_) {
+        // l'autre vient peut-être de l'ajouter en même temps : on recharge
+      }
+      await _fetchMedia();
+      item = find();
+      if (item == null) throw 'Ajout impossible. Réessaie.';
+    }
+    if (item.status == 'current') throw 'Déjà en cours.';
+    if (item.status == 'done') throw 'Déjà fini.';
+    await _db
+        .from('media_wishes')
+        .upsert({'media_id': item.id, 'user_id': userId}, ignoreDuplicates: true);
+    await _reloadMedia();
+  }
+
+  Future<void> removeWish(MediaItem m) async {
+    await _db
+        .from('media_wishes')
+        .delete()
+        .eq('media_id', m.id)
+        .eq('user_id', userId);
+    final others = (wishes[m.id] ?? {}).where((u) => u != userId);
+    if (others.isEmpty && m.status == 'wish') {
+      await _db.from('media').delete().eq('id', m.id);
+    }
+    await _reloadMedia();
+  }
+
+  Future<void> start(MediaItem m) async {
+    if (current(m.kind) != null) {
+      throw '${m.kind.label} déjà en cours. Termine-le ou remets-le en envie.';
+    }
+    try {
+      await _db.from('media').update({'status': 'current'}).eq('id', m.id);
+    } on PostgrestException {
+      throw '${m.kind.label} déjà en cours.';
+    }
+    await _reloadMedia();
+  }
+
+  Future<void> backToWish(MediaItem m) async {
+    await _db.from('media').update({
+      'status': 'wish',
+      'finished_by': null,
+      'finished_at': null,
+    }).eq('id', m.id);
+    await _db
+        .from('media_wishes')
+        .upsert({'media_id': m.id, 'user_id': userId}, ignoreDuplicates: true);
+    await _reloadMedia();
+  }
+
+  /// Passe en fini. [rating] 1 à 5, ou null / 0 sans note.
+  Future<void> finish(MediaItem m, int? rating) async {
+    await _db.from('media').update({
+      'status': 'done',
+      'finished_by': userId,
+      'finished_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', m.id);
+    if (rating != null && rating > 0) await _upsertRating(m.id, rating);
+    await _reloadMedia();
+  }
+
+  /// Remet un titre fini en cours (si le créneau est libre). Les notes sont gardées.
+  Future<void> reopen(MediaItem m) async {
+    if (current(m.kind) != null) {
+      throw '${m.kind.label} déjà en cours.';
+    }
+    try {
+      await _db.from('media').update({
+        'status': 'current',
+        'finished_by': null,
+        'finished_at': null,
+      }).eq('id', m.id);
+    } on PostgrestException {
+      throw '${m.kind.label} déjà en cours.';
+    }
+    await _reloadMedia();
+  }
+
+  Future<void> setRating(MediaItem m, int rating) async {
+    await _upsertRating(m.id, rating);
+    await _reloadMedia();
+  }
+
+  Future<void> _upsertRating(String mediaId, int rating) => _db
+      .from('media_ratings')
+      .upsert({'media_id': mediaId, 'user_id': userId, 'rating': rating},
+          onConflict: 'media_id,user_id');
 
   @override
   void dispose() {
