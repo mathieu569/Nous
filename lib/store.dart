@@ -44,17 +44,23 @@ class Story {
     required this.authorId,
     required this.createdAt,
     required this.imagePath,
+    this.caption,
+    this.isPhoto = false,
   });
   final String id;
   final String authorId;
   final DateTime createdAt;
   final String imagePath;
+  final String? caption;
+  final bool isPhoto; // photo ou dessin
 
   factory Story.fromRow(Map<String, dynamic> r) => Story(
         id: r['id'] as String,
         authorId: r['author_id'] as String,
         createdAt: DateTime.parse(r['created_at'] as String).toLocal(),
         imagePath: r['image_path'] as String,
+        caption: r['caption'] as String?,
+        isPhoto: r['kind'] == 'photo',
       );
 }
 
@@ -259,9 +265,11 @@ class AppStore extends ChangeNotifier {
   }
 
   /// Demande à Supabase d'envoyer une notification à l'autre. Sans effet si ça échoue.
-  Future<void> _notifyPartner() async {
+  /// [type] : 'drawing' ou 'photo' pour un partage, null pour un changement d'état.
+  Future<void> _notifyPartner([String? type]) async {
     try {
-      await _db.functions.invoke('notify-status');
+      await _db.functions
+          .invoke('notify-status', body: type == null ? null : {'type': type});
     } catch (_) {}
   }
 
@@ -286,26 +294,33 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  Future<void> addStory(Uint8List png) async {
+  /// Partage un dessin (PNG) ou une photo (JPEG), avec un commentaire facultatif.
+  Future<void> addStory(Uint8List bytes,
+      {required bool photo, String? caption}) async {
+    final ext = photo ? 'jpg' : 'png';
     final path =
-        '$coupleId/story-${DateTime.now().millisecondsSinceEpoch}-$userId.png';
+        '$coupleId/story-${DateTime.now().millisecondsSinceEpoch}-$userId.$ext';
     await _db.storage.from('nous').uploadBinary(
           path,
-          png,
-          fileOptions: const FileOptions(contentType: 'image/png'),
+          bytes,
+          fileOptions: FileOptions(contentType: photo ? 'image/jpeg' : 'image/png'),
         );
+    final c = caption?.trim();
     final row = await _db
         .from('stories')
         .insert({
           'couple_id': coupleId,
           'author_id': userId,
           'image_path': path,
+          'kind': photo ? 'photo' : 'drawing',
+          'caption': (c == null || c.isEmpty) ? null : c,
         })
         .select()
         .single();
-    _images[path] = png;
+    _images[path] = bytes;
     stories = [Story.fromRow(row), ...stories];
     notifyListeners();
+    unawaited(_notifyPartner(photo ? 'photo' : 'drawing'));
   }
 
   Future<void> removeStory(Story s) async {

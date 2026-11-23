@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../push.dart';
 import '../store.dart';
 import '../utils.dart';
+import 'compose_screen.dart';
 import 'draw_screen.dart';
 import 'status_dialog.dart';
 
@@ -112,13 +113,54 @@ class _HomeScreenState extends State<HomeScreen> {
     if (t != null) await _run(() => store.updateMe(name: t));
   }
 
-  Future<void> _draw() async {
-    final bytes = await Navigator.push<Uint8List>(
-      context,
-      MaterialPageRoute(builder: (_) => const DrawScreen()),
+  Future<void> _share() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.brush),
+              title: const Text('Dessiner'),
+              onTap: () => Navigator.pop(ctx, 'draw'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Photo'),
+              onTap: () => Navigator.pop(ctx, 'photo'),
+            ),
+          ],
+        ),
+      ),
     );
+    if (choice == null || !mounted) return;
+
+    Uint8List? bytes;
+    var photo = false;
+    if (choice == 'draw') {
+      bytes = await Navigator.push<Uint8List>(
+        context,
+        MaterialPageRoute(builder: (_) => const DrawScreen()),
+      );
+    } else {
+      photo = true;
+      final x = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 80,
+      );
+      if (x != null) bytes = await x.readAsBytes();
+    }
     if (bytes == null || !mounted) return;
-    await _run(() => store.addStory(bytes));
+
+    final caption = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => ComposeScreen(image: bytes!)),
+    );
+    if (caption == null || !mounted) return; // retour arrière : on n'envoie rien
+    await _run(() => store.addStory(bytes!, photo: photo, caption: caption));
     if (mounted) setState(() => _mine = true);
   }
 
@@ -140,7 +182,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: CircularProgressIndicator(),
               ),
             const SizedBox(height: 8),
-            Text(DateFormat.yMMMMd('fr_FR').add_Hm().format(s.createdAt)),
+            if (s.caption != null && s.caption!.isNotEmpty) ...[
+              Text(s.caption!),
+              const SizedBox(height: 4),
+            ],
+            Text(DateFormat.yMMMMd('fr_FR').add_Hm().format(s.createdAt),
+                style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
         actions: [
@@ -299,7 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (list.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(24),
-        child: Center(child: Text('Aucune story pour l\'instant.')),
+        child: Center(child: Text('Rien de partagé pour l\'instant.')),
       );
     }
     return GridView.count(
@@ -356,9 +403,9 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               Center(
                 child: IconButton.filled(
-                  tooltip: 'Dessiner une story',
+                  tooltip: 'Partager un dessin ou une photo',
                   iconSize: 32,
-                  onPressed: _busy ? null : _draw,
+                  onPressed: _busy ? null : _share,
                   icon: const Icon(Icons.add),
                 ),
               ),
