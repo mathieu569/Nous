@@ -116,6 +116,7 @@ class AppStore extends ChangeNotifier {
   List<MediaItem> media = [];
   Map<String, Set<String>> wishes = {}; // media id -> ids des personnes qui en ont envie
   Map<String, Map<String, int>> ratings = {}; // media id -> (user id -> note)
+  Map<String, Map<String, DateTime>> finishDates = {}; // media id -> (user id -> date de fin)
 
   final Map<String, Uint8List> _images = {};
   final Set<String> _loadingImages = {};
@@ -412,7 +413,10 @@ class AppStore extends ChangeNotifier {
   /// Ce titre est-il déjà "consommé" par cette personne ? (en cours ou fini pour elle, ou ensemble)
   bool consumedBy(MediaItem m, String? uid) =>
       m.status != 'wish' &&
-      (m.ownerId == null || m.ownerId == uid || m.finishedBy == uid);
+      (m.ownerId == null ||
+          m.ownerId == uid ||
+          m.finishedBy == uid ||
+          (m.status == 'done' && finishDates[m.id]?[uid] != null));
 
   /// Envie encore ouverte pour cette personne : souhaitée et pas encore consommée par elle.
   bool openWishOf(MediaItem m, String? uid) =>
@@ -445,6 +449,26 @@ class AppStore extends ChangeNotifier {
   int? partnerRating(String mediaId) =>
       partner == null ? null : ratings[mediaId]?[partner!.userId];
 
+  /// Date de fin d'une personne : la sienne si elle en a une, sinon celle du titre
+  /// pour un titre fini ensemble ou par elle. Null si elle n'a pas fini ce titre.
+  DateTime? finishedOn(MediaItem m, String? uid) {
+    if (m.status != 'done' || uid == null) return null;
+    final own = finishDates[m.id]?[uid];
+    if (own != null) return own;
+    return (m.ownerId == null || m.finishedBy == uid) ? m.finishedAt : null;
+  }
+
+  DateTime? myFinish(MediaItem m) => finishedOn(m, userId);
+  DateTime? partnerFinish(MediaItem m) => finishedOn(m, partner?.userId);
+
+  /// Date la plus récente des deux, pour trier « Finis ».
+  DateTime lastFinish(MediaItem m) {
+    final a = myFinish(m), b = partnerFinish(m);
+    final all = [if (a != null) a, if (b != null) b];
+    if (all.isEmpty) return m.finishedAt ?? m.createdAt;
+    return all.reduce((x, y) => x.isAfter(y) ? x : y);
+  }
+
   int _mediaSeq = 0;
 
   /// Charge les titres, envies et notes. Si plusieurs chargements se croisent
@@ -462,9 +486,14 @@ class AppStore extends ChangeNotifier {
       (wishes[x['media_id'] as String] ??= {}).add(x['user_id'] as String);
     }
     ratings = {};
+    finishDates = {};
     for (final x in r) {
-      (ratings[x['media_id'] as String] ??= {})[x['user_id'] as String] =
-          x['rating'] as int;
+      final mid = x['media_id'] as String, uid = x['user_id'] as String;
+      if (x['rating'] != null) (ratings[mid] ??= {})[uid] = x['rating'] as int;
+      if (x['finished_at'] != null) {
+        (finishDates[mid] ??= {})[uid] =
+            DateTime.parse(x['finished_at'] as String).toLocal();
+      }
     }
     return items;
   }
@@ -543,6 +572,7 @@ class AppStore extends ChangeNotifier {
         'finished_by': null,
         'finished_at': null,
       }).eq('id', m.id);
+      await _clearDates(m.id);
     } on PostgrestException {
       throw '${m.kind.label} déjà en cours.';
     }
@@ -556,20 +586,35 @@ class AppStore extends ChangeNotifier {
       'finished_by': null,
       'finished_at': null,
     }).eq('id', m.id);
+    await _clearDates(m.id);
     await _db
         .from('media_wishes')
         .upsert({'media_id': m.id, 'user_id': userId}, ignoreDuplicates: true);
     await _reloadMedia();
   }
 
+  Future<void> _clearDates(String mediaId) async {
+    try {
+      await _db.rpc('clear_finish_dates', params: {'p_media': mediaId});
+    } catch (_) {}
+  }
+
   /// Passe en fini. [rating] 1 à 5, ou null / 0 sans note.
+  /// Ma date = maintenant. Pour un titre « ensemble », l'autre a la même date par défaut.
   Future<void> finish(MediaItem m, int? rating) async {
+    final now = DateTime.now().toUtc().toIso8601String();
     await _db.from('media').update({
       'status': 'done',
       'finished_by': userId,
-      'finished_at': DateTime.now().toUtc().toIso8601String(),
+      'finished_at': now,
     }).eq('id', m.id);
-    if (rating != null && rating > 0) await _upsertRating(m.id, rating);
+    await _clearDates(m.id);
+    await _db.from('media_ratings').upsert({
+      'media_id': m.id,
+      'user_id': userId,
+      'finished_at': now,
+      if (rating != null && rating > 0) 'rating': rating,
+    }, onConflict: 'media_id,user_id');
     await _reloadMedia();
   }
 
@@ -584,22 +629,27 @@ class AppStore extends ChangeNotifier {
         'finished_by': null,
         'finished_at': null,
       }).eq('id', m.id);
+      await _clearDates(m.id);
     } on PostgrestException {
       throw '${m.kind.label} déjà en cours.';
     }
     await _reloadMedia();
   }
 
-  /// Change la date de fin (midi, heure locale, pour éviter tout décalage de jour).
-  Future<void> setFinishedDate(MediaItem m, DateTime day) async {
+  /// Ma date de fin (midi, heure locale, pour éviter tout décalage de jour).
+  /// Sert aussi quand je déclare avoir fini un titre que l'autre a terminé.
+  Future<void> setMyFinishDate(MediaItem m, DateTime day) async {
     final d = DateTime(day.year, day.month, day.day, 12);
-    await _db
-        .from('media')
-        .update({'finished_at': d.toUtc().toIso8601String()}).eq('id', m.id);
+    await _db.from('media_ratings').upsert({
+      'media_id': m.id,
+      'user_id': userId,
+      'finished_at': d.toUtc().toIso8601String(),
+    }, onConflict: 'media_id,user_id');
     await _reloadMedia();
   }
 
   Future<void> setRating(MediaItem m, int rating) async {
+    if (myFinish(m) == null) throw 'Choisis d\'abord ta date de fin.';
     await _upsertRating(m.id, rating);
     await _reloadMedia();
   }
