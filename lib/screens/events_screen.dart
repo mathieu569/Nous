@@ -3,11 +3,129 @@ import 'package:intl/intl.dart';
 
 import '../store.dart';
 import '../utils.dart';
+import 'category_dialog.dart';
 import 'event_edit_screen.dart';
 
-class EventsScreen extends StatelessWidget {
+class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key, required this.store});
   final AppStore store;
+
+  @override
+  State<EventsScreen> createState() => _EventsScreenState();
+}
+
+class _EventsScreenState extends State<EventsScreen> {
+  AppStore get store => widget.store;
+
+  /// null = tous, '' = sans catégorie, sinon id de catégorie.
+  String? _filter;
+
+  /// L'événement passe-t-il le filtre de catégorie actuel ?
+  bool _matches(CoupleEvent e) {
+    if (_filter == null) return true;
+    if (_filter == '') return e.categoryId == null;
+    return e.categoryId == _filter;
+  }
+
+  void _snack(Object e) {
+    if (!mounted) return;
+    final text = e is String ? e : errorText(e);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _addCategory() async {
+    final name = await askCategoryName(context, title: 'Nouvelle catégorie');
+    if (name == null) return;
+    try {
+      final id = await store.addCategory(name);
+      setState(() => _filter = id);
+    } catch (e) {
+      _snack(e);
+    }
+  }
+
+  Future<void> _manage(EventCategory c) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(title: Text(c.name, style: Theme.of(ctx).textTheme.titleMedium)),
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Renommer'),
+              onTap: () => Navigator.pop(ctx, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Supprimer (les événements restent)'),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == 'rename') {
+      if (!mounted) return;
+      final name =
+          await askCategoryName(context, title: 'Renommer', initial: c.name);
+      if (name == null) return;
+      try {
+        await store.renameCategory(c, name);
+      } catch (e) {
+        _snack(e);
+      }
+    } else if (action == 'delete') {
+      try {
+        await store.removeCategory(c);
+        if (_filter == c.id) setState(() => _filter = null);
+      } catch (e) {
+        _snack(e);
+      }
+    }
+  }
+
+  Widget _filters() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(
+        children: [
+          ChoiceChip(
+            label: const Text('Tous'),
+            selected: _filter == null,
+            onSelected: (_) => setState(() => _filter = null),
+          ),
+          for (final c in store.categories) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onLongPress: () => _manage(c),
+              child: ChoiceChip(
+                label: Text(c.name),
+                selected: _filter == c.id,
+                onSelected: (_) => setState(() => _filter = c.id),
+              ),
+            ),
+          ],
+          if (store.categories.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            ChoiceChip(
+              label: const Text('Sans catégorie'),
+              selected: _filter == '',
+              onSelected: (_) => setState(() => _filter = ''),
+            ),
+          ],
+          const SizedBox(width: 8),
+          ActionChip(
+            avatar: const Icon(Icons.add, size: 18),
+            label: const Text('Catégorie'),
+            onPressed: _addCategory,
+          ),
+        ],
+      ),
+    );
+  }
 
   void _open(BuildContext context, CoupleEvent? e) {
     Navigator.push(
@@ -43,8 +161,9 @@ class EventsScreen extends StatelessWidget {
     );
   }
 
-  Widget _card(BuildContext context, CoupleEvent e, DateTime now, bool isPast) {
-    final shown = isPast ? e.at : nextOccurrence(e.at, e.repeat, now);
+  Widget _card(BuildContext context, CoupleEvent e, DateTime shown, DateTime now,
+      bool isPast) {
+    final cat = store.categoryName(e.categoryId);
     final photo = store.image(e.photoPath);
     final hasNote = e.note != null && e.note!.isNotEmpty;
     final rep = repeatLabel(e.repeat);
@@ -69,6 +188,7 @@ class EventsScreen extends StatelessWidget {
       );
     }
     return Card(
+      key: ValueKey('${e.id}-${shown.millisecondsSinceEpoch}-$isPast'),
       child: ListTile(
         leading: leading,
         isThreeLine: hasNote,
@@ -78,13 +198,14 @@ class EventsScreen extends StatelessWidget {
           children: [
             Text('${DateFormat.yMMMMd('fr_FR').format(shown)} à '
                 '${DateFormat.Hm('fr_FR').format(shown)}'
-                '${rep.isEmpty ? '' : ' · $rep'}'),
+                '${rep.isEmpty ? '' : ' · $rep'}'
+                '${cat == null ? '' : ' · $cat'}'),
             if (hasNote)
               Text(e.note!, maxLines: 2, overflow: TextOverflow.ellipsis),
           ],
         ),
         trailing: Text(
-          isPast ? _ago(e.at, now) : _countdown(shown, now),
+          isPast ? _ago(shown, now) : _countdown(shown, now),
           style: Theme.of(context).textTheme.titleMedium,
         ),
         onTap: () => _open(context, e),
@@ -103,29 +224,51 @@ class EventsScreen extends StatelessWidget {
         listenable: store,
         builder: (context, _) {
           final now = DateTime.now();
-          final upcoming = <CoupleEvent>[];
-          final past = <CoupleEvent>[];
-          for (final e in store.events) {
-            if (e.repeat == EventRepeat.none && e.at.isBefore(now)) {
-              past.add(e);
+          if (_filter != null &&
+              _filter != '' &&
+              !store.categories.any((c) => c.id == _filter)) {
+            _filter = null;
+          }
+          final upcoming = <(CoupleEvent, DateTime)>[];
+          final past = <(CoupleEvent, DateTime)>[];
+          for (final e in store.events.where(_matches)) {
+            if (e.repeat == EventRepeat.none) {
+              (e.at.isBefore(now) ? past : upcoming).add((e, e.at));
             } else {
-              upcoming.add(e);
+              upcoming.add((e, nextOccurrence(e.at, e.repeat, now)));
+              for (final o in pastOccurrences(e.at, e.repeat, now)) {
+                past.add((e, o));
+              }
             }
           }
-          upcoming.sort((a, b) => nextOccurrence(a.at, a.repeat, now)
-              .compareTo(nextOccurrence(b.at, b.repeat, now)));
-          past.sort((a, b) => b.at.compareTo(a.at));
+          upcoming.sort((a, b) => a.$2.compareTo(b.$2));
+          past.sort((a, b) => b.$2.compareTo(a.$2));
 
-          if (upcoming.isEmpty && past.isEmpty) {
-            return const Center(child: Text('Aucun événement. Ajoutez-en un.'));
+          if (store.events.isEmpty) {
+            return Column(children: [
+              _filters(),
+              const Expanded(
+                  child: Center(child: Text('Aucun événement. Ajoutez-en un.'))),
+            ]);
           }
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 88),
+          return Column(
             children: [
-              if (upcoming.isNotEmpty) _header(context, 'À venir'),
-              for (final e in upcoming) _card(context, e, now, false),
-              if (past.isNotEmpty) _header(context, 'Passés'),
-              for (final e in past) _card(context, e, now, true),
+              _filters(),
+              Expanded(
+                child: (upcoming.isEmpty && past.isEmpty)
+                    ? const Center(child: Text('Aucun événement ici.'))
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 88),
+                        children: [
+                          if (upcoming.isNotEmpty) _header(context, 'À venir'),
+                          for (final x in upcoming)
+                            _card(context, x.$1, x.$2, now, false),
+                          if (past.isNotEmpty) _header(context, 'Passés'),
+                          for (final x in past)
+                            _card(context, x.$1, x.$2, now, true),
+                        ],
+                      ),
+              ),
             ],
           );
         },

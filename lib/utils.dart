@@ -66,6 +66,24 @@ DateTime _nthOccurrence(DateTime start, EventRepeat r, int k) {
 /// Prochaine occurrence à partir de [now]. Sans récurrence : la date d'origine.
 DateTime nextOccurrence(DateTime start, EventRepeat r, DateTime now) {
   if (r == EventRepeat.none || !start.isBefore(now)) return start;
+  return _nthOccurrence(start, r, _nextIndex(start, r, now));
+}
+
+/// Occurrences déjà passées d'un événement récurrent, de la plus récente à la plus ancienne
+/// (au plus [limit]). Vide sans récurrence ou si la date d'origine est dans le futur.
+List<DateTime> pastOccurrences(DateTime start, EventRepeat r, DateTime now,
+    {int limit = 12}) {
+  if (r == EventRepeat.none || !start.isBefore(now)) return const [];
+  final next = _nextIndex(start, r, now);
+  final out = <DateTime>[];
+  for (var j = next - 1; j >= 0 && out.length < limit; j--) {
+    out.add(_nthOccurrence(start, r, j));
+  }
+  return out;
+}
+
+/// Rang de la prochaine occurrence (0 = la date d'origine).
+int _nextIndex(DateTime start, EventRepeat r, DateTime now) {
   var k = 0;
   if (r == EventRepeat.weekly) {
     k = now.difference(start).inDays ~/ 7;
@@ -81,7 +99,7 @@ DateTime nextOccurrence(DateTime start, EventRepeat r, DateTime now) {
   while (k > 0 && !_nthOccurrence(start, r, k - 1).isBefore(now)) {
     k--;
   }
-  return _nthOccurrence(start, r, k);
+  return k;
 }
 
 /// Message d'erreur lisible.

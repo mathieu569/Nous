@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../store.dart';
 import '../utils.dart';
+import 'category_dialog.dart';
 
 /// Création et modification d'un événement.
 class EventEditScreen extends StatefulWidget {
@@ -22,6 +23,7 @@ class _EventEditScreenState extends State<EventEditScreen> {
   late final TextEditingController _note;
   late DateTime _date; // date et heure
   late EventRepeat _repeat;
+  String? _categoryId;
   Uint8List? _newPhoto;
   bool _removePhoto = false;
   bool _busy = false;
@@ -38,6 +40,7 @@ class _EventEditScreenState extends State<EventEditScreen> {
     // Nouvel événement : demain à 12:00 par défaut.
     _date = e?.at ?? DateTime(now.year, now.month, now.day + 1, 12, 0);
     _repeat = e?.repeat ?? EventRepeat.none;
+    _categoryId = e?.categoryId;
   }
 
   @override
@@ -77,6 +80,17 @@ class _EventEditScreenState extends State<EventEditScreen> {
     }
   }
 
+  Future<void> _newCategory() async {
+    final name = await askCategoryName(context, title: 'Nouvelle catégorie');
+    if (name == null) return;
+    try {
+      final id = await widget.store.addCategory(name);
+      if (mounted) setState(() => _categoryId = id);
+    } catch (e) {
+      _snack(e);
+    }
+  }
+
   Future<void> _pickPhoto() async {
     final x = await ImagePicker().pickImage(
       source: ImageSource.gallery,
@@ -105,6 +119,7 @@ class _EventEditScreenState extends State<EventEditScreen> {
         title: title,
         at: _date,
         repeat: _repeat,
+        categoryId: _categoryId,
         note: _note.text.trim(),
         // La photo n'existe que pour un événement passé.
         newPhoto: _isPast ? _newPhoto : null,
@@ -248,6 +263,29 @@ class _EventEditScreenState extends State<EventEditScreen> {
             ],
             selected: {_repeat},
             onSelectionChanged: (s) => setState(() => _repeat = s.first),
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            value: widget.store.categories.any((c) => c.id == _categoryId)
+                ? _categoryId
+                : '',
+            decoration: const InputDecoration(
+                labelText: 'Catégorie', border: OutlineInputBorder()),
+            items: [
+              const DropdownMenuItem<String>(
+                  value: '', child: Text('Aucune')),
+              for (final c in widget.store.categories)
+                DropdownMenuItem<String>(value: c.id, child: Text(c.name)),
+              const DropdownMenuItem<String>(
+                  value: '__new', child: Text('+ Nouvelle catégorie')),
+            ],
+            onChanged: (v) {
+              if (v == '__new') {
+                _newCategory();
+              } else {
+                setState(() => _categoryId = (v == null || v.isEmpty) ? null : v);
+              }
+            },
           ),
           const SizedBox(height: 16),
           TextField(

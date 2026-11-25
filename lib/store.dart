@@ -64,6 +64,12 @@ class Story {
       );
 }
 
+class EventCategory {
+  EventCategory({required this.id, required this.name});
+  final String id;
+  final String name;
+}
+
 class CoupleEvent {
   CoupleEvent({
     required this.id,
@@ -72,7 +78,9 @@ class CoupleEvent {
     this.note,
     this.photoPath,
     this.repeat = EventRepeat.none,
+    this.categoryId,
   });
+  final String? categoryId;
   final String id;
   final String title;
   final DateTime at; // date d'origine + heure, en heure locale
@@ -89,6 +97,7 @@ class CoupleEvent {
       at: DateTime.parse(raw).toLocal(),
       note: r['note'] as String?,
       photoPath: r['photo_path'] as String?,
+      categoryId: r['category_id'] as String?,
       repeat: EventRepeat.values.firstWhere(
         (v) => v.name == repeatName,
         orElse: () => EventRepeat.none,
@@ -113,6 +122,10 @@ class AppStore extends ChangeNotifier {
   Profile? partner;
   List<Story> stories = [];
   List<CoupleEvent> events = [];
+  List<EventCategory> categories = [];
+
+  String? categoryName(String? id) =>
+      categories.where((c) => c.id == id).map((c) => c.name).firstOrNull;
   List<MediaItem> media = [];
   Map<String, Set<String>> wishes = {}; // media id -> ids des personnes qui en ont envie
   Map<String, Map<String, int>> ratings = {}; // media id -> (user id -> note)
@@ -160,6 +173,12 @@ class AppStore extends ChangeNotifier {
           .order('created_at', ascending: false)
           .limit(60);
       stories = storyRows.map<Story>((r) => Story.fromRow(r)).toList();
+
+      try {
+        categories = await _fetchCategories();
+      } catch (_) {
+        categories = []; // SQL des catégories pas encore lancé
+      }
 
       try {
         events = await _fetchEvents();
@@ -210,7 +229,7 @@ class AppStore extends ChangeNotifier {
   void _subscribe() {
     if (_channel != null || coupleId == null) return;
     final ch = _db.channel('nous-$coupleId');
-    for (final t in ['profiles', 'stories', 'events', 'couples', 'media', 'media_wishes', 'media_ratings']) {
+    for (final t in ['profiles', 'stories', 'events', 'event_categories', 'couples', 'media', 'media_wishes', 'media_ratings']) {
       ch.onPostgresChanges(
         event: PostgresChangeEvent.all,
         schema: 'public',
@@ -334,6 +353,53 @@ class AppStore extends ChangeNotifier {
     _images.remove(s.imagePath);
   }
 
+  Future<List<EventCategory>> _fetchCategories() async {
+    final rows = await _db.from('event_categories').select().order('name');
+    return rows
+        .map<EventCategory>(
+            (r) => EventCategory(id: r['id'] as String, name: r['name'] as String))
+        .toList();
+  }
+
+  String _catError(PostgrestException e) =>
+      e.code == '23505' ? 'Cette catégorie existe déjà.' : errorText(e);
+
+  /// Crée une catégorie et renvoie son id.
+  Future<String> addCategory(String name) async {
+    try {
+      final r = await _db
+          .from('event_categories')
+          .insert({'couple_id': coupleId, 'name': name.trim()})
+          .select()
+          .single();
+      categories = await _fetchCategories();
+      notifyListeners();
+      return r['id'] as String;
+    } on PostgrestException catch (e) {
+      throw _catError(e);
+    }
+  }
+
+  Future<void> renameCategory(EventCategory c, String name) async {
+    try {
+      await _db
+          .from('event_categories')
+          .update({'name': name.trim()}).eq('id', c.id);
+    } on PostgrestException catch (e) {
+      throw _catError(e);
+    }
+    categories = await _fetchCategories();
+    notifyListeners();
+  }
+
+  /// Supprime la catégorie. Ses événements passent « sans catégorie ».
+  Future<void> removeCategory(EventCategory c) async {
+    await _db.from('event_categories').delete().eq('id', c.id);
+    categories = await _fetchCategories();
+    events = await _fetchEvents();
+    notifyListeners();
+  }
+
   Future<List<CoupleEvent>> _fetchEvents() async {
     final rows = await _db.from('events').select().order('event_at');
     return rows.map<CoupleEvent>((r) => CoupleEvent.fromRow(r)).toList();
@@ -345,6 +411,7 @@ class AppStore extends ChangeNotifier {
     required String title,
     required DateTime at,
     required EventRepeat repeat,
+    String? categoryId,
     String? note,
     Uint8List? newPhoto,
     bool clearPhoto = false,
@@ -373,6 +440,7 @@ class AppStore extends ChangeNotifier {
       'repeat': repeat.name,
       'note': (note == null || note.isEmpty) ? null : note,
       'photo_path': photoPath,
+      'category_id': categoryId,
     };
     if (id == null) {
       await _db.from('events').insert({...data, 'couple_id': coupleId});
