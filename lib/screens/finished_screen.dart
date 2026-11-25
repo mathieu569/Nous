@@ -5,9 +5,107 @@ import '../media.dart';
 import '../store.dart';
 
 /// Tout ce qui est fini, avec les deux notes.
-class FinishedScreen extends StatelessWidget {
+class FinishedScreen extends StatefulWidget {
   const FinishedScreen({super.key, required this.store});
   final AppStore store;
+
+  @override
+  State<FinishedScreen> createState() => _FinishedScreenState();
+}
+
+enum _Who { tous, moi, elle, deux }
+
+class _FinishedScreenState extends State<FinishedScreen> {
+  AppStore get store => widget.store;
+
+  _Who _who = _Who.tous;
+  MediaKind? _kind; // null = tous les types
+  bool _byNote = false; // false = tri par date
+  bool _asc = false; // false = décroissant
+
+  /// Moyenne des notes données (celle de l'un, de l'autre ou des deux). Null si aucune.
+  double? _avg(MediaItem m) {
+    final r = [store.myRating(m.id), store.partnerRating(m.id)].whereType<int>();
+    if (r.isEmpty) return null;
+    return r.reduce((a, b) => a + b) / r.length;
+  }
+
+  bool _keep(MediaItem m) {
+    if (_kind != null && m.kind != _kind) return false;
+    final mine = store.myFinish(m) != null;
+    final her = store.partnerFinish(m) != null;
+    return switch (_who) {
+      _Who.tous => true,
+      _Who.moi => mine && !her,
+      _Who.elle => her && !mine,
+      _Who.deux => mine && her,
+    };
+  }
+
+  /// Date de tri : celle de la personne concernée, sinon la plus récente des deux.
+  DateTime _date(MediaItem m) => switch (_who) {
+        _Who.moi => store.myFinish(m) ?? store.lastFinish(m),
+        _Who.elle => store.partnerFinish(m) ?? store.lastFinish(m),
+        _ => store.lastFinish(m),
+      };
+
+  int _compare(MediaItem a, MediaItem b) {
+    final byDate = _asc ? _date(a).compareTo(_date(b)) : _date(b).compareTo(_date(a));
+    if (!_byNote) return byDate;
+    final x = _avg(a), y = _avg(b);
+    if (x == null && y == null) return _date(b).compareTo(_date(a));
+    if (x == null) return 1; // sans note : toujours à la fin
+    if (y == null) return -1;
+    final c = _asc ? x.compareTo(y) : y.compareTo(x);
+    return c != 0 ? c : _date(b).compareTo(_date(a));
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+            label: Text(label), selected: selected, onSelected: (_) => onTap()),
+      );
+
+  Widget _controls() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              _chip('Tous', _who == _Who.tous, () => setState(() => _who = _Who.tous)),
+              _chip('Moi seul', _who == _Who.moi, () => setState(() => _who = _Who.moi)),
+              _chip('$_partnerName seule', _who == _Who.elle,
+                  () => setState(() => _who = _Who.elle)),
+              _chip('Les deux', _who == _Who.deux, () => setState(() => _who = _Who.deux)),
+            ]),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              _chip('Tous types', _kind == null, () => setState(() => _kind = null)),
+              for (final k in MediaKind.values)
+                _chip(k.plural, _kind == k, () => setState(() => _kind = k)),
+            ]),
+          ),
+          Row(children: [
+            const Text('Tri : '),
+            const SizedBox(width: 8),
+            _chip('Date', !_byNote, () => setState(() => _byNote = false)),
+            _chip('Note', _byNote, () => setState(() => _byNote = true)),
+            const Spacer(),
+            IconButton(
+              tooltip: _asc ? 'Croissant' : 'Décroissant',
+              icon: Icon(_asc ? Icons.arrow_upward : Icons.arrow_downward),
+              onPressed: () => setState(() => _asc = !_asc),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
 
   String get _partnerName =>
       (store.partner?.name.isNotEmpty ?? false) ? store.partner!.name : 'Elle';
@@ -143,12 +241,21 @@ class FinishedScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
-        final items = store.media.where((m) => m.status == 'done').toList()
-          ..sort((a, b) => store.lastFinish(b).compareTo(store.lastFinish(a)));
-        if (items.isEmpty) {
+        final done = store.media.where((m) => m.status == 'done').toList();
+        if (done.isEmpty) {
           return const Center(child: Text('Rien de fini pour l\'instant.'));
         }
-        return ListView(
+        final items = done.where(_keep).toList()..sort(_compare);
+        if (items.isEmpty) {
+          return Column(children: [
+            _controls(),
+            const Expanded(child: Center(child: Text('Aucun titre ici.'))),
+          ]);
+        }
+        return Column(children: [
+          _controls(),
+          Expanded(
+            child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
             for (final m in items)
@@ -170,7 +277,11 @@ class FinishedScreen extends StatelessWidget {
                             children: [
                               Text(m.title,
                                   style: Theme.of(context).textTheme.titleMedium),
-                              Text(m.kind.label),
+                              Text([
+                                m.kind.label,
+                                if (_byNote && _avg(m) != null)
+                                  'moyenne ${_avg(m)!.toStringAsFixed(1).replaceAll('.', ',')}',
+                              ].join(' · ')),
                               const SizedBox(height: 6),
                               _personLine('Moi', store.myFinish(m),
                                   store.myRating(m.id)),
@@ -185,7 +296,9 @@ class FinishedScreen extends StatelessWidget {
                 ),
               ),
           ],
-        );
+        ),
+          ),
+        ]);
       },
     );
   }
